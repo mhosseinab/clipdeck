@@ -2,6 +2,7 @@
   "name": "clipdeck",
   "version": "1.0.0",
   "description": "Open-source clipboard manager for macOS and Linux",
+  "desktopName": "ClipDeck",
   "main": "dist-electron/main.js",
   "license": "MIT",
   "private": true,
@@ -44,7 +45,6 @@
       "maintainer": "mhosseinab <mhosseinab@users.noreply.github.com>",
       "vendor": "ClipDeck",
       "icon": "build/icon.png",
-      "desktopName": "ClipDeck",
       "syncDesktopName": true
     },
     "mac": {
