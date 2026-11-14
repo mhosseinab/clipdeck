@@ -25,6 +25,7 @@ jobs:
           path: ~/.cache/electron-builder
           key: linux-electron-builder-${{ hashFiles('**/package-lock.json') }}
       - run: npm ci
+      - run: npm run build
       - run: npx electron-builder --linux --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -46,6 +47,7 @@ jobs:
           path: ~/Library/Caches/electron-builder
           key: mac-electron-builder-${{ hashFiles('**/package-lock.json') }}
       - run: npm ci
+      - run: npm run build
       - run: npx electron-builder --mac --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
