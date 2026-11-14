@@ -21,7 +21,19 @@ keystroke, organize into pinboards, and queue multiple items with the paste stac
 - **Tray icon** — pause watching, clear history, settings, quit
 - **Settings** — history limits, shortcut, content rules, excluded apps
 
-## Install & run
+## Download
+
+Grab the latest release from the [Releases page](https://github.com/mhosseinab/clipdeck/releases):
+
+- **Linux (Ubuntu)**: `ClipDeck-*-linux-amd64.deb` or `ClipDeck-*-linux-x86_64.AppImage`
+- **macOS**: `ClipDeck-*-mac-*.dmg` (Apple Silicon & Intel)
+
+> macOS builds are unsigned for now — if Gatekeeper blocks the app, run
+> `xattr -d com.apple.quarantine /Applications/ClipDeck.app` after installing.
+> On Ubuntu 23.10+ if the app fails to start (restricted user namespaces), run it
+> with `--no-sandbox` or install the `.deb` and see the note below.
+
+## Install & run (from source)
 
 ```bash
 npm install

@@ -1,10 +1,11 @@
 {
   "name": "clipdeck",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Open-source clipboard manager for macOS and Linux",
   "main": "dist-electron/main.js",
   "license": "MIT",
   "private": true,
+  "author": "mhosseinab",
   "scripts": {
     "build:main": "esbuild electron/main.ts --bundle --platform=node --target=node20 --outfile=dist-electron/main.js --external:electron",
     "build:preload": "esbuild electron/preload.ts --bundle --platform=node --target=node20 --outfile=dist-electron/preload.js --external:electron",
@@ -13,27 +14,75 @@
     "dev:renderer": "vite",
     "dev:app": "npm run build:main && npm run build:preload && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron . --no-sandbox",
     "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:app\"",
-    "start": "npm run build && electron . --no-sandbox"
+    "start": "npm run build && electron . --no-sandbox",
+    "dist:linux": "npm run build && electron-builder --linux",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist": "npm run build && electron-builder"
+  },
+  "build": {
+    "appId": "dev.clipdeck.app",
+    "productName": "ClipDeck",
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**",
+      "dist-electron/**",
+      "package.json"
+    ],
+    "asar": true,
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Utility",
+      "synopsis": "Fast clipboard manager",
+      "description": "Open-source clipboard manager with searchable history, pinboards and paste stack.",
+      "maintainer": "mhosseinab <mhosseinab@users.noreply.github.com>",
+      "vendor": "ClipDeck",
+      "icon": "build/icon.png",
+      "desktopName": "ClipDeck",
+      "syncDesktopName": true
+    },
+    "mac": {
+      "category": "public.app-category.productivity",
+      "icon": "build/icon.png",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ]
+    }
   },
   "dependencies": {
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
-    "@types/node": "^26.6.6",
+    "@types/node": "^24.10.1",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^9.1.0",
     "cross-env": "^7.0.3",
     "electron": "^33.2.0",
+    "electron-builder": "^26.18.0",
     "esbuild": "^0.24.0",
     "typescript": "^5.7.2",
     "vite": "^6.0.3"
-  },
-  "allowScripts": {
-    "electron@33.4.11": true,
-    "esbuild@0.24.2": true,
-    "esbuild@0.25.12": true
   }
 }
