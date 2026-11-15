@@ -151,12 +151,6 @@ are unsupported. Unavailable options are omitted from Settings. Do not rely on t
 features for privacy; pause watching or quit ClipDeck when handling sensitive
 content.
 
-Inside a Flatpak sandbox, configure startup and open Keyboard Settings through
-the desktop. The shortcut command is
-`flatpak run io.github.mhosseinab.clipdeck toggle`. Source-app filtering is
-unavailable in the sandbox. Hooks and sync paths can access only resources
-available inside the sandbox.
-
 ## Format compatibility
 
 The store (`clipdeck-store.json`) and sync (`clipdeck-sync.jsonl`) formats are

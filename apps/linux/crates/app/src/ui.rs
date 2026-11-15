@@ -128,7 +128,6 @@ pub struct Ui {
     settings_notice: Option<String>,
     capture: bool,
     wayland_session: bool,
-    sandboxed: bool,
     stack_open: bool,
     scroll_x: f32,
     view_w: f32,
@@ -170,7 +169,6 @@ pub fn run(
         capture: false,
         wayland_session: std::env::var_os("WAYLAND_DISPLAY").is_some()
             || std::env::var("XDG_SESSION_TYPE").as_deref() == Ok("wayland"),
-        sandboxed: crate::is_flatpak(),
         stack_open: false,
         // Frame-dump QA can select a scroll offset without injected input.
         scroll_x: if std::env::var_os("CLIPDECK_DUMP_UI").is_some() {
@@ -231,7 +229,7 @@ impl Ui {
             }
             AppEvent::OpenKeyboardSettings => {
                 let mut effects = Effects::none();
-                effects.open_keyboard_settings = !self.sandboxed;
+                effects.open_keyboard_settings = true;
                 effects
             }
             AppEvent::CopyShortcutCommand => {
@@ -1409,11 +1407,11 @@ impl Ui {
         let f = self.fonts.clone();
         round_rect(pm, x, y, 440.0, 184.0, 12.0, rgba(28, 31, 45, 255));
         f.text_l(pm, x + 18.0, y + 22.0, 14.0, "Global shortcut", Face::Medium, rgba(245, 247, 252, 255));
-        let instruction = if self.wayland_session || self.sandboxed { "Add a custom shortcut in Keyboard Settings." }
+        let instruction = if self.wayland_session { "Add a custom shortcut in Keyboard Settings." }
             else { "Click to record, or use Keyboard Settings." };
         f.text_l(pm, x + 18.0, y + 44.0, 12.0, instruction, Face::Regular, rgba(238, 240, 246, 220));
         round_rect(pm, x + 18.0, y + 58.0, 404.0, 44.0, 6.0, rgba(0, 0, 0, 70));
-        if self.wayland_session || self.sandboxed {
+        if self.wayland_session {
             f.wrap_lines(pm, x + 26.0, y + 64.0, 388.0, 10.5, &shortcut_command(), Face::Mono, 2);
         } else {
             let shortcut = if self.capture { "Press keys... (Esc cancels)".to_string() }
@@ -1424,14 +1422,9 @@ impl Ui {
         round_rect(pm, x + 18.0, y + 114.0, 118.0, 30.0, 7.0, rgba(255, 255, 255, 24));
         f.text_c(pm, x + 77.0, y + 129.0, 11.0, "Copy Command", Face::Medium, rgba(245, 247, 252, 255));
         self.hit(x + 18.0, y + 114.0, 118.0, 30.0, Hit::CopyShortcutCommand);
-        if self.sandboxed {
-            f.wrap_lines(pm, x + 146.0, y + 118.0, 276.0, 11.0,
-                "Open your desktop's Keyboard Settings", Face::Regular, 2);
-        } else {
-            round_rect(pm, x + 146.0, y + 114.0, 276.0, 30.0, 7.0, rgba(109, 149, 255, 235));
-            f.text_c(pm, x + 284.0, y + 129.0, 12.0, "Keyboard Settings", Face::Medium, rgba(255, 255, 255, 255));
-            self.hit(x + 146.0, y + 114.0, 276.0, 30.0, Hit::OpenKeyboardSettings);
-        }
+        round_rect(pm, x + 146.0, y + 114.0, 276.0, 30.0, 7.0, rgba(109, 149, 255, 235));
+        f.text_c(pm, x + 284.0, y + 129.0, 12.0, "Keyboard Settings", Face::Medium, rgba(255, 255, 255, 255));
+        self.hit(x + 146.0, y + 114.0, 276.0, 30.0, Hit::OpenKeyboardSettings);
         if let Some(notice) = self.settings_notice.as_deref() {
             f.wrap_lines(pm, x + 18.0, y + 154.0, 404.0, 10.5, notice, Face::Regular, 2);
         }
@@ -1440,8 +1433,6 @@ impl Ui {
     fn setting_unavailable_reason(&self, key: &str) -> Option<&'static str> {
         match key {
             "transient" | "share" | "link_previews" => Some("Unsupported"),
-            "login" if self.sandboxed => Some("Managed by desktop"),
-            "confidential" if self.sandboxed => Some("No source app"),
             "confidential" if self.wayland_session => Some("No source app"),
             _ => None,
         }
@@ -1472,11 +1463,7 @@ impl Ui {
         round_rect(pm, left, 52.0, width, 96.0, 12.0, rgba(28, 31, 45, 255));
         f.text_l(pm, left + 18.0, 72.0, 13.0, "General", Face::Medium, rgba(245, 247, 252, 255));
         self.draw_setting_row(pm, left + 18.0, 82.0, width - 36.0, "Watch clipboard", s.watch_enabled, "watch");
-        if self.sandboxed {
-            f.text_l(pm, left + 18.0, 125.0, 11.0, "Manage startup in your desktop settings", Face::Regular, rgba(238, 240, 246, 180));
-        } else {
-            self.draw_setting_row(pm, left + 18.0, 112.0, width - 36.0, "Start at login", s.launch_at_login, "login");
-        }
+        self.draw_setting_row(pm, left + 18.0, 112.0, width - 36.0, "Start at login", s.launch_at_login, "login");
 
         round_rect(pm, left, 160.0, width, 192.0, 12.0, rgba(28, 31, 45, 255));
         f.text_l(pm, left + 18.0, 180.0, 13.0, "Clipboard", Face::Medium, rgba(245, 247, 252, 255));
@@ -1489,16 +1476,14 @@ impl Ui {
         for (index, (label, on, key)) in rows.iter().enumerate() {
             self.draw_setting_row(pm, left + 18.0, 190.0 + index as f32 * 30.0, width - 36.0, label, *on, key);
         }
-        if !self.wayland_session && !self.sandboxed {
+        if !self.wayland_session {
             self.draw_setting_row(pm, left + 18.0, 310.0, width - 36.0,
                 "Confidential-app filter", s.ignore_confidential, "confidential");
         }
         self.draw_shortcut_setup(pm, right, 52.0);
         round_rect(pm, right, 248.0, 440.0, 104.0, 12.0, rgba(28, 31, 45, 255));
         f.text_l(pm, right + 18.0, 270.0, 13.0, "Privacy", Face::Medium, rgba(245, 247, 252, 255));
-        let privacy = if self.sandboxed {
-            "Sensitive content is not automatically excluded in Flatpak. Pause watching when needed."
-        } else if self.wayland_session {
+        let privacy = if self.wayland_session {
             "Sensitive content is not automatically excluded on Wayland. Pause watching when needed."
         } else {
             "Source-app filtering is best effort. Screen capture can include the overlay."
@@ -1515,17 +1500,10 @@ fn keyboard_settings_command() -> std::process::Command {
 }
 
 fn shortcut_command() -> String {
-    shortcut_command_for(crate::is_flatpak(), std::env::current_exe().ok().as_deref())
-}
-
-fn shortcut_command_for(sandboxed: bool, executable: Option<&std::path::Path>) -> String {
-    if sandboxed {
-        return format!("flatpak run {} toggle", crate::APP_ID);
-    }
-    executable.map(|path| {
+    std::env::current_exe().map(|path| {
         let path = path.to_string_lossy().replace('\\', "\\\\").replace('"', "\\\"");
         format!("\"{path}\" toggle")
-    }).unwrap_or_else(|| "clipdeck toggle".into())
+    }).unwrap_or_else(|_| "clipdeck toggle".into())
 }
 
 /* ===================== input mapping ===================== */
@@ -1668,7 +1646,7 @@ mod tests {
             tray_view: Arc::new(RwLock::new(TrayView::default())),
             fonts: Fonts::bundled(), thumbnails: ThumbnailCache::default(), window: None, surface: None,
             query: String::new(), selected: 0, filter: 0, editing: None, dialog: None, drag: None, drop_feedback: None,
-            settings: false, settings_notice: None, capture: false, wayland_session: true, sandboxed: false, stack_open: false, scroll_x: 0.0,
+            settings: false, settings_notice: None, capture: false, wayland_session: true, stack_open: false, scroll_x: 0.0,
             view_w: W, visible: false, mods: ModifiersState::empty(), mouse: None, last_card_click: None,
             hits: vec![], items: vec![], pinboards: vec![],
         }, worker_rx)
@@ -1781,37 +1759,6 @@ mod tests {
         let command = keyboard_settings_command();
         assert_eq!(command.get_program(), "gnome-control-center");
         assert_eq!(command.get_args().collect::<Vec<_>>(), ["keyboard"]);
-    }
-
-    #[test]
-    fn flatpak_settings_hide_unavailable_host_integration() {
-        let mut ui = fixture_ui();
-        ui.sandboxed = true;
-        ui.settings = true;
-        for wayland in [false, true] {
-            ui.wayland_session = wayland;
-            ui.render_frame(W as u32, H as u32);
-            for unavailable in [Hit::Toggle("login"), Hit::Toggle("confidential"), Hit::OpenKeyboardSettings] {
-                assert!(!ui.hits.iter().any(|(_,_,_,_,hit)| *hit == unavailable), "sandbox exposes {unavailable:?}");
-            }
-            assert!(ui.hits.iter().any(|(_,_,_,_,hit)| *hit == Hit::CopyShortcutCommand));
-            let before = ui.app.store.settings.clone();
-            ui.apply(AppEvent::ToggleSetting { key: "login" });
-            assert_eq!(ui.app.store.settings, before);
-        }
-    }
-
-    #[test]
-    fn flatpak_shortcut_uses_host_launcher() {
-        assert_eq!(shortcut_command_for(true, Some(std::path::Path::new("/app/bin/clipdeck"))),
-            "flatpak run io.github.mhosseinab.clipdeck toggle");
-    }
-
-    #[test]
-    fn native_shortcut_quotes_the_executable() {
-        assert_eq!(shortcut_command_for(false, Some(std::path::Path::new("/opt/Clip Deck/clipdeck"))),
-            "\"/opt/Clip Deck/clipdeck\" toggle");
-        assert_eq!(shortcut_command_for(false, None), "clipdeck toggle");
     }
 
     #[test]

@@ -27,10 +27,6 @@ pub(crate) const APP_ID: &str = "io.github.mhosseinab.clipdeck";
 
 const MAX_CONTROL_BYTES: u64 = 32;
 
-pub(crate) fn is_flatpak() -> bool {
-    Path::new("/.flatpak-info").is_file()
-}
-
 fn user_data() -> PathBuf {
     profile_directory(std::env::var_os("CLIPDECK_USER_DATA"),
         std::env::var_os("XDG_DATA_HOME"), std::env::var_os("HOME"))
@@ -265,7 +261,7 @@ fn run_daemon() {
     let app = AppState::open(&data);
 
     // Launch-at-login per spec §11 (re-applied at startup of the daemon).
-    if app.settings().launch_at_login && !is_flatpak() {
+    if app.settings().launch_at_login {
         clipdeck_core::apply_login_item_linux(true, &exe_path(), &home()).ok();
     }
 
