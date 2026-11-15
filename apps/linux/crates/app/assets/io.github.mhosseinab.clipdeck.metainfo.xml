@@ -30,6 +30,12 @@
     <control>keyboard</control>
     <control>pointing</control>
   </supports>
+  <screenshots>
+    <screenshot type="default">
+      <image width="1240" height="372">https://raw.githubusercontent.com/mhosseinab/clipdeck/b44f36c694d7a8d034a2d0ee602946c7a0b67576/assets/screenshots/clipdeck-history.png</image>
+      <caption>Search clipboard history and organize clips into boards</caption>
+    </screenshot>
+  </screenshots>
   <releases>
     <release version="2.0.1" date="2026-11-15"/>
   </releases>
