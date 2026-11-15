@@ -27,11 +27,23 @@ pub(crate) const APP_ID: &str = "io.github.mhosseinab.clipdeck";
 
 const MAX_CONTROL_BYTES: u64 = 32;
 
+pub(crate) fn is_flatpak() -> bool {
+    Path::new("/.flatpak-info").is_file()
+}
+
 fn user_data() -> PathBuf {
-    if let Some(p) = std::env::var_os("CLIPDECK_USER_DATA") {
+    profile_directory(std::env::var_os("CLIPDECK_USER_DATA"),
+        std::env::var_os("XDG_DATA_HOME"), std::env::var_os("HOME"))
+}
+
+fn profile_directory(override_path: Option<std::ffi::OsString>, xdg_data: Option<std::ffi::OsString>, home: Option<std::ffi::OsString>) -> PathBuf {
+    if let Some(p) = override_path {
         return PathBuf::from(p);
     }
-    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    if let Some(path) = xdg_data.map(PathBuf::from).filter(|path| path.is_absolute()) {
+        return path.join("clipdeck");
+    }
+    let home = home.map(PathBuf::from).unwrap_or_default();
     home.join(".local").join("share").join("clipdeck")
 }
 
@@ -253,7 +265,7 @@ fn run_daemon() {
     let app = AppState::open(&data);
 
     // Launch-at-login per spec §11 (re-applied at startup of the daemon).
-    if app.settings().launch_at_login {
+    if app.settings().launch_at_login && !is_flatpak() {
         clipdeck_core::apply_login_item_linux(true, &exe_path(), &home()).ok();
     }
 
@@ -305,6 +317,21 @@ fn prefer_x11(force: Option<bool>, wayland: bool, display: bool, desktop: &str) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn profile_directory_respects_xdg_and_explicit_override() {
+        let home = Some("/home/test".into());
+        let xdg = Some("/sandbox/data".into());
+        assert_eq!(profile_directory(None, xdg.clone(), home.clone()), PathBuf::from("/sandbox/data/clipdeck"));
+        assert_eq!(profile_directory(Some("/custom".into()), xdg, home), PathBuf::from("/custom"));
+    }
+
+    #[test]
+    fn profile_directory_ignores_empty_or_relative_xdg_paths() {
+        for xdg in [None, Some("".into()), Some("relative/data".into())] {
+            assert_eq!(profile_directory(None, xdg, Some("/home/test".into())), PathBuf::from("/home/test/.local/share/clipdeck"));
+        }
+    }
 
     #[test]
     fn control_socket_is_private_and_profile_scoped() {

@@ -119,7 +119,14 @@ pub fn spawn(view: Arc<RwLock<TrayView>>, events: EventLoopProxy<AppEvent>) {
     if std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_none() {
         return;
     }
-    ksni::TrayService::new(ClipTray { view, events }).spawn();
+    let service = ksni::TrayService::new(ClipTray { view, events });
+    // A unique bus name works through Flatpak's filtered session bus without
+    // requesting ownership of org.kde.StatusNotifierItem-*.
+    if crate::is_flatpak() {
+        service.spawn_without_dbus_name();
+    } else {
+        service.spawn();
+    }
 }
 
 #[cfg(test)]

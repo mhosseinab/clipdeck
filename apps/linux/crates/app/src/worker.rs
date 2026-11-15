@@ -210,7 +210,7 @@ impl Worker {
 
 /// Active window title (X11) for sourceApp attribution; None when unknown.
 fn active_window_title() -> Option<String> {
-    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+    if crate::is_flatpak() || std::env::var_os("WAYLAND_DISPLAY").is_some() {
         return None;
     }
     let out = std::process::Command::new("xdotool")

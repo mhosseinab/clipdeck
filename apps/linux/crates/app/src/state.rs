@@ -226,6 +226,9 @@ impl AppState {
 
     /// All settings toggles in one place (single point of truth).
     pub fn toggle_setting(&mut self, key: &str) -> Effects {
+        if key == "login" && crate::is_flatpak() {
+            return Effects::none();
+        }
         {
             let s = &mut self.store.settings;
             match key {

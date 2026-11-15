@@ -129,7 +129,9 @@ Stop the daemon before using CLI `import`; importing refuses a profile already
 held by a running daemon. Back up the full profile, including its images, before
 installing a candidate. CLI `export` alone is not an image-file backup.
 
-The default profile is `~/.local/share/clipdeck`. Set `CLIPDECK_USER_DATA` to
+The default profile is `$XDG_DATA_HOME/clipdeck`, falling back to
+`~/.local/share/clipdeck` when `XDG_DATA_HOME` is unset or not absolute.
+Set `CLIPDECK_USER_DATA` to
 use a separate profile, and pass the same value to its daemon and CLI commands.
 Each profile has a private `.ipc/control.sock`; multiple profiles have independent
 control endpoints. Profiles and control directories use owner-only permissions.
@@ -146,6 +148,12 @@ protect those captures. Transient clipboard markers and screen-share exclusion
 are unsupported. Unavailable options are omitted from Settings. Do not rely on those
 features for privacy; pause watching or quit ClipDeck when handling sensitive
 content.
+
+Inside a Flatpak sandbox, configure startup and open Keyboard Settings through
+the desktop. The shortcut command is
+`flatpak run io.github.mhosseinab.clipdeck toggle`. Source-app filtering is
+unavailable in the sandbox. Hooks and sync paths can access only resources
+available inside the sandbox.
 
 ## Format compatibility
 
