@@ -8,9 +8,6 @@ clips, and a paste stack—all in a compact native overlay.
 
 ## Install
 
-<iframe src="https://snapcraft.io/clipdeck/embedded?button=white" frameborder="0" width="100%" height="450px" style="border: 1px solid #CCC; border-radius: 2px;"></iframe>
-
-<!-- GitHub removes iframes; the official Store badge below remains usable. -->
 [![Get it from the Snap Store](https://snapcraft.io/en/light/install.svg)](https://snapcraft.io/clipdeck)
 
 ```bash
