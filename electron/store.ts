@@ -58,7 +58,7 @@ export const DEFAULT_SETTINGS: Settings = {
   soundPaste: true,
   maxItems: 5000,
   shortcut: "CommandOrControl+Shift+V",
-  launchAtLogin: false,
+  launchAtLogin: true,
   theme: "dark",
   excludedApps: ["com.apple.keychainaccess", "com.apple.Passwords", "1Password", "Bitwarden", "KeePass"],
   ignoreTransient: true,

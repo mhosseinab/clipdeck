@@ -157,6 +157,14 @@ export default function SettingsPage() {
           </div>
         </div>
         <label className="row">
+          <span>Start ClipDeck at login</span>
+          <input
+            type="checkbox"
+            checked={s.launchAtLogin}
+            onChange={(e) => patch({ launchAtLogin: e.target.checked })}
+          />
+        </label>
+        <label className="row">
           <span>Show overlay during screen sharing</span>
           <input
             type="checkbox"

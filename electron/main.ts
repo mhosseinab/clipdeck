@@ -16,6 +16,7 @@ import { Store, type ClipItem, type Settings } from "./store";
 import { ClipboardWatcher, frontmostApp, simulatePaste, writeToClipboard } from "./clipboard";
 import { runHooks } from "./hooks";
 import { SyncStore } from "./sync";
+import { applyLoginItem } from "./autostart";
 
 // Test/dev hook: run a parallel instance without touching the real profile.
 if (process.env.CLIPDECK_USER_DATA) {
@@ -84,6 +85,18 @@ function makeIcon(): Electron.NativeImage {
 function toggleOverlay(): void {
   if (overlay?.isVisible()) hideOverlay();
   else showOverlay();
+}
+
+function applyLogin(): void {
+  applyLoginItem({
+    platform: process.platform,
+    enable: store.settings().launchAtLogin,
+    isPackaged: app.isPackaged,
+    execPath: process.execPath,
+    appPath: app.getAppPath(),
+    appImage: process.env.APPIMAGE,
+    setLoginItemSettings: (openAtLogin) => app.setLoginItemSettings({ openAtLogin }),
+  });
 }
 
 function applyScreenShare(): void {
@@ -346,6 +359,7 @@ function wireIpc(): void {
       sync.reconfigure();
     }
     if (patch.showInScreenShare !== undefined) applyScreenShare();
+    if (patch.launchAtLogin !== undefined) applyLogin();
     return s;
   });
   ipcMain.handle("app:hide", () => hideOverlay());
@@ -468,6 +482,7 @@ if (!gotLock) {
   app.whenReady().then(() => {
     store = new Store(app.getPath("userData"));
     sync = new SyncStore(store);
+    if (app.isPackaged) applyLogin();
     watching = store.settings().watchEnabled;
     watcher = new ClipboardWatcher(store, (item) => {
       sync.append(item);

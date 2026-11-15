@@ -1,6 +1,6 @@
 {
   "name": "clipdeck",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Open-source clipboard manager for macOS and Linux",
   "desktopName": "ClipDeck",
   "main": "dist-electron/main.js",

@@ -6,6 +6,7 @@ import path from "node:path";
 import { Store } from "../electron/store.ts";
 import { SyncStore } from "../electron/sync.ts";
 import { runHooks } from "../electron/hooks.ts";
+import { applyLoginItem, linuxAutostartFile } from "../electron/autostart.ts";
 
 function tmp(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "clipdeck-test-"));
@@ -126,4 +127,64 @@ test("runHooks executes copy hooks with stdin and never throws", () => {
   }
   assert.equal(fs.readFileSync(marker, "utf8"), "hook-payload");
   runHooks("paste", makeItem("ignored"), settings); // wrong event: no throw
+});
+
+test("launch-at-login writes and removes the Linux autostart entry", () => {
+  const home = tmp();
+  const file = linuxAutostartFile(home);
+  applyLoginItem({
+    platform: "linux",
+    enable: true,
+    isPackaged: true,
+    execPath: "/opt/ClipDeck/clipdeck",
+    appPath: "/opt/ClipDeck/resources/app.asar",
+    home,
+  });
+  const entry = fs.readFileSync(file, "utf8");
+  assert.match(entry, /^\[Desktop Entry\]/m);
+  assert.match(entry, /Exec="\/opt\/ClipDeck\/clipdeck"/);
+  assert.match(entry, /X-GNOME-Autostart-enabled=true/);
+
+  applyLoginItem({
+    platform: "linux",
+    enable: false,
+    isPackaged: true,
+    execPath: "/opt/ClipDeck/clipdeck",
+    appPath: "/opt/ClipDeck/resources/app.asar",
+    home,
+  });
+  assert.ok(!fs.existsSync(file), "entry removed when disabled");
+});
+
+test("AppImage installs autostart with the AppImage path", () => {
+  const home = tmp();
+  const file = linuxAutostartFile(home);
+  applyLoginItem({
+    platform: "linux",
+    enable: true,
+    isPackaged: true,
+    execPath: "/tmp/.mount_ClipDe/clipdeck",
+    appPath: "/tmp/.mount_ClipDe/resources/app.asar",
+    appImage: "/home/u/Downloads/ClipDeck-1.1.0.AppImage",
+    home,
+  });
+  assert.match(fs.readFileSync(file, "utf8"), /Exec="\/home\/u\/Downloads\/ClipDeck-1\.1\.0\.AppImage"/);
+});
+
+test("non-Linux platforms delegate to setLoginItemSettings", () => {
+  const calls: boolean[] = [];
+  applyLoginItem({
+    platform: "darwin",
+    enable: true,
+    isPackaged: true,
+    execPath: "/Applications/ClipDeck.app/Contents/MacOS/ClipDeck",
+    appPath: "/Applications/ClipDeck.app/Contents/Resources/app.asar",
+    setLoginItemSettings: (v) => calls.push(v),
+  });
+  assert.deepEqual(calls, [true]);
+});
+
+test("settings default to launching at login", () => {
+  const store = new Store(tmp());
+  assert.equal(store.settings().launchAtLogin, true);
 });
