@@ -9,7 +9,7 @@ case "$1" in
   *) usage >&2; exit 2 ;;
 esac
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
-node spec/verify.mjs
+cargo run --locked --manifest-path apps/linux/Cargo.toml -p clipdeck-spec --
 case "$1" in
   linux-core) cargo test --locked --manifest-path apps/linux/Cargo.toml -p clipdeck-core ;;
   linux)

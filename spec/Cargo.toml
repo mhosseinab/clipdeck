@@ -1,0 +1,16 @@
+[package]
+name = "clipdeck-spec"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+workspace = "../apps/linux"
+publish = false
+
+[[bin]]
+name = "clipdeck-spec"
+path = "verify.rs"
+
+[dependencies]
+serde_json = "1"
+url = "2"

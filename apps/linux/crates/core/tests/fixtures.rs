@@ -1,5 +1,5 @@
 //! Fixture-driven parity tests: every case in spec/fixtures must pass against
-//! this crate, exactly as `spec/verify.mjs` validates against the reference.
+//! this crate, exactly as `spec/verify.rs` validates against the reference.
 
 use clipdeck_core::*;
 use serde::Deserialize;

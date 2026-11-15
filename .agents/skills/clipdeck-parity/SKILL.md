@@ -9,7 +9,7 @@ Deliver the requested behavior with matching contract and Rust semantics and
 fixture evidence. Work from the repository root and follow its AGENTS.md.
 
 1. Read the affected section of `spec/behavior.md`, the matching file under
-   `spec/fixtures/`, and its reference implementation in `spec/verify.mjs`.
+   `spec/fixtures/`, and its reference implementation in `spec/verify.rs`.
    Fixtures take precedence over conflicting prose; report the conflict.
 2. Trace the behavior in `apps/linux/crates/core/src/` and the fixture consumer
    `apps/linux/crates/core/tests/fixtures.rs`.

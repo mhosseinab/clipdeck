@@ -30,8 +30,8 @@ the runtime libraries listed in the Debian package dependencies.
 
 ## Build and run
 
-Requires Rust 1.89 or newer (use current stable), Node.js 22 for the fixture
-oracle, and `pkg-config` / `libdbus-1-dev` on Ubuntu. A graphical Linux session
+Requires Rust 1.89 or newer (use current stable), and `pkg-config` /
+`libdbus-1-dev` on Ubuntu. A graphical Linux session
 is required to run the app. GNOME users need a tray extension for tray visibility;
 the CLI works without a tray.
 

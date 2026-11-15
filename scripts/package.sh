@@ -3,12 +3,12 @@
 set -euo pipefail
 [[ $# -eq 0 ]] || { echo 'Usage: bash scripts/package.sh' >&2; exit 2; }
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
-for tool in cargo node dpkg-deb desktop-file-validate appstreamcli sha256sum tar; do
+for tool in cargo dpkg-deb desktop-file-validate appstreamcli sha256sum tar; do
   command -v "$tool" >/dev/null || { echo "Missing packaging tool: $tool" >&2; exit 1; }
 done
 cargo deb --version >/dev/null
 bash scripts/check.sh linux
-target_dir="$(cargo metadata --locked --no-deps --format-version 1 --manifest-path apps/linux/Cargo.toml | node -e 'let s=""; process.stdin.on("data", d => s += d); process.stdin.on("end", () => console.log(JSON.parse(s).target_directory));')"
+target_dir="$(cargo run --quiet --locked --manifest-path apps/linux/Cargo.toml -p clipdeck-spec -- --print-target-dir)"
 binary="$target_dir/release/clipdeck"
 output="$PWD/dist/candidate"
 app_id="io.github.mhosseinab.clipdeck"

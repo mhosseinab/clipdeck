@@ -37,7 +37,8 @@ original.
 - `spec/behavior.md`: behavior contract; fixtures take precedence when
   prose and fixture expectations disagree. Report the disagreement.
 - `spec/fixtures/`, `spec/schema/`, `spec/examples/`: parity vectors and formats.
-- `spec/verify.mjs`: reference oracle (`node spec/verify.mjs`, 202 checks).
+- `spec/verify.rs`: independent Rust reference oracle (202 checks). Run it
+  with `bash scripts/check.sh spec`; it does not import the application core.
 - `apps/linux/crates/core/`: platform-independent behavior + fixture tests
   (`cargo test -p clipdeck-core`).
 - `apps/linux/crates/app/`: Linux event loop, UI, tray, clipboard, hotkeys.
@@ -103,7 +104,7 @@ original.
 ## Build, test, verify
 
 1. `cargo test --workspace` (in `apps/linux/`) — must be 0 failures before any
-   claim. `node spec/verify.mjs` for the contract oracle. Write failing tests
+   claim. `bash scripts/check.sh spec` for the contract oracle. Write failing tests
    first for bug fixes (red-green); `ui.rs` and `draw.rs` carry unit tests.
 2. `cargo build --release --package clipdeck-app`; stop the intended profile
    with `clipdeck quit` and restart it with the same `CLIPDECK_USER_DATA`.
