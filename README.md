@@ -7,11 +7,12 @@ organize clips into pinboards, pin favorites, and copy from a compact overlay.
 
 ## Install
 
-For Ubuntu 24.04 or newer on x86_64, download the Debian package from
+For Ubuntu 24.04 or newer on x86_64 (`amd64`) or ARM64 (`arm64`), download the
+matching Debian package from
 [GitHub Releases](https://github.com/mhosseinab/clipdeck/releases/latest).
 
 ```bash
-sudo apt install ./clipdeck_2.0.1-1_amd64.deb
+sudo apt install ./clipdeck_2.0.1-1_$(dpkg --print-architecture).deb
 clipdeck
 ```
 
