@@ -2,6 +2,7 @@
 //! CLI control channel. Behavior is defined by spec/behavior.md.
 
 mod state;
+mod tray;
 mod watcher;
 mod paste;
 mod hotkey;
@@ -98,6 +99,7 @@ fn spawn_control_server(shared: Arc<Mutex<AppState>>, proxy: winit::event_loop::
                 let cmd = match buf.trim() {
                     "quit" => ui::Command::Quit,
                     "settings" => ui::Command::OpenSettings,
+                    "open" => ui::Command::Show,
                     _ => ui::Command::Toggle,
                 };
                 if proxy.send_event(cmd).is_err() {
@@ -126,15 +128,20 @@ fn run_daemon() {
         }
     }
 
-    let event_loop = winit::event_loop::EventLoop::<ui::Command>::with_user_event()
-        .build()
-        .map_err(|e| e.to_string())
-        .unwrap_or_else(|e| {
-            eprintln!("event loop: {e}");
-            std::process::exit(1);
-        });
+    let mut builder = winit::event_loop::EventLoop::<ui::Command>::with_user_event();
+    // QA/test hook: force the X11 backend (XWayland) so input injection tools
+    // can see the window; production defaults to Wayland-first selection.
+    if std::env::var_os("CLIPDECK_FORCE_X11").is_some() {
+        use winit::platform::x11::EventLoopBuilderExtX11;
+        builder.with_x11();
+    }
+    let event_loop = builder.build().map_err(|e| e.to_string()).unwrap_or_else(|e| {
+        eprintln!("event loop: {e}");
+        std::process::exit(1);
+    });
     let proxy = event_loop.create_proxy();
     spawn_control_server(shared.clone(), proxy.clone());
+    tray::spawn(shared.clone(), proxy.clone());
 
     // Clipboard watcher thread (§2).
     let watch_state = shared.clone();

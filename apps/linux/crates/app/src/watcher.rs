@@ -22,6 +22,9 @@ pub fn run(state: Arc<Mutex<AppState>>, proxy: EventLoopProxy<Command>) {
 
     loop {
         std::thread::sleep(Duration::from_millis(POLL_MS));
+        if !state.lock().unwrap().store.settings.watch_enabled {
+            continue;
+        }
         let Ok(mut clip) = Clipboard::new() else { continue };
         let text = clip.get_text().unwrap_or_default();
         let sig = sha16(text.as_bytes());

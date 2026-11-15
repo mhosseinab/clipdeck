@@ -41,21 +41,27 @@ pub fn run_hooks(event: &str, content: &str, hooks: &[Hook]) {
             children.push(child);
         }
     }
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    for mut child in children {
-        loop {
-            match child.try_wait() {
-                Ok(Some(_)) => break,
-                Ok(None) => {
-                    if std::time::Instant::now() >= deadline {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        break;
+    if children.is_empty() {
+        return;
+    }
+    // Reap on a detached thread with a 5 s deadline so callers never block.
+    std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        for mut child in children {
+            loop {
+                match child.try_wait() {
+                    Ok(Some(_)) => break,
+                    Ok(None) => {
+                        if std::time::Instant::now() >= deadline {
+                            let _ = child.kill();
+                            let _ = child.wait();
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(10));
                     }
-                    std::thread::sleep(Duration::from_millis(10));
+                    Err(_) => break,
                 }
-                Err(_) => break,
             }
         }
-    }
+    });
 }

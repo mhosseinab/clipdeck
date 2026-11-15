@@ -6,7 +6,14 @@ use std::process::{Command, Stdio};
 
 const RATE: u32 = 22050;
 
+/// Fire-and-forget: playback runs on a detached thread so it can never block
+/// the UI thread or hold the state lock (hang root cause #2).
 pub fn play(kind: &str) {
+    let kind = kind.to_string();
+    std::thread::spawn(move || play_blocking(&kind));
+}
+
+fn play_blocking(kind: &str) {
     let wav = match kind {
         "copy" => blip(660.0, 0.10),
         _ => noise(0.06),

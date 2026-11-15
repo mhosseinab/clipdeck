@@ -22,13 +22,36 @@ apps/
   linux/       Rust workspace (core + app)
 ```
 
+## Install (Linux)
+
+```bash
+sudo dpkg -i clipdeck_2.0.0-1_amd64.deb     # binary, desktop entry, icon
+clipdeck                                     # daemon + tray (starts hidden)
+```
+
+- Global shortcut: `Ctrl+Shift+V` (recorder in Settings) — show/hide the overlay
+- Tray menu: open, settings, pause watching, recent items, quit
+- Runs at login (autostart entry, toggle in Settings)
+- CLI: `clipdeck toggle|open|settings|quit|export|import`
+
+Build the package yourself:
+
+```bash
+cd apps/linux
+cargo build --release
+cargo install cargo-deb
+cargo deb -p clipdeck-app        # -> target/debian/clipdeck_*.deb
+```
+
 ## Development
 
 ```bash
-node spec/verify.mjs     # validate fixtures against the reference oracle
+node spec/verify.mjs                          # fixture oracle (198 checks)
+cd apps/linux && cargo test -p clipdeck-core  # Rust parity suite
+cargo build --release && ./target/release/clipdeck
 ```
 
-Per-platform build instructions arrive with each app (Phase 2+).
+macOS: `cd apps/macos && swift test && swift build -c release`
 
 ## Format compatibility
 

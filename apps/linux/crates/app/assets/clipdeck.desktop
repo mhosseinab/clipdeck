@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=ClipDeck
+GenericName=Clipboard Manager
+Comment=Fast clipboard history with search, pinboards and paste stack
+Exec=clipdeck
+Icon=clipdeck
+Terminal=false
+Categories=Utility;
+Keywords=clipboard;history;paste;copy;manager;
+StartupNotify=false

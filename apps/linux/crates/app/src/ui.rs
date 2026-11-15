@@ -6,7 +6,7 @@ use crate::state::AppState;
 use clipdeck_core::{pretty_accel, record_accel, ClipItem, ItemType, KeyPress};
 use fontdue::Font;
 use std::sync::{Arc, Mutex};
-use tiny_skia::{FillRule, Paint, PathBuilder, Pixmap, Transform};
+use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Transform};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
@@ -19,6 +19,7 @@ const H: f32 = 372.0;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Command {
     Toggle,
+    Show,
     OpenSettings,
     Quit,
     Refresh,
@@ -33,6 +34,7 @@ enum Hit {
     Pin(usize),
     Edit(usize),
     OpenSettings,
+    CloseWindow,
     StackToggle,
     StackPasteNext,
     StackClear,
@@ -52,6 +54,7 @@ pub struct Ui {
     window: Option<Arc<Window>>,
     surface: Option<softbuffer::Surface<Arc<Window>, Arc<Window>>>,
     font: Font,
+    medium: Font,
     mono: Font,
     query: String,
     selected: usize,
@@ -65,34 +68,26 @@ pub struct Ui {
     mouse: Option<(f32, f32)>,
     visible: bool,
     mods: ModifiersState,
+    scroll_x: f32,
 }
 
-fn load_font(mono: bool) -> Font {
-    let candidates = if mono {
-        vec![
-            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
-        ]
-    } else {
-        vec![
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        ]
-    };
-    for p in candidates {
-        if let Ok(bytes) = std::fs::read(p) {
-            if let Ok(f) = Font::from_bytes(bytes, fontdue::FontSettings::default()) {
-                return f;
-            }
-        }
-    }
-    // last resort: any ttf under /usr/share/fonts
-    if let Some(bytes) = find_any_ttf() {
-        if let Ok(f) = Font::from_bytes(bytes, fontdue::FontSettings::default()) {
-            return f;
-        }
-    }
-    panic!("no usable TTF font found under /usr/share/fonts");
+/// Bundled standard fonts (OFL-licensed Roboto family, see assets/fonts/OFL.txt).
+const ROBOTO_REGULAR: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/fonts/Roboto-Regular.ttf"
+));
+const ROBOTO_MEDIUM: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/fonts/Roboto-Medium.ttf"
+));
+const ROBOTO_MONO: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/fonts/RobotoMono-Regular.ttf"
+));
+
+fn load_font(bytes: &'static [u8]) -> Font {
+    Font::from_bytes(bytes.to_vec(), fontdue::FontSettings::default())
+        .expect("bundled font must parse")
 }
 
 fn find_any_ttf() -> Option<Vec<u8>> {
@@ -120,8 +115,9 @@ pub fn run(
         state,
         window: None,
         surface: None,
-        font: load_font(false),
-        mono: load_font(true),
+        font: load_font(ROBOTO_REGULAR),
+        medium: load_font(ROBOTO_MEDIUM),
+        mono: load_font(ROBOTO_MONO),
         query: String::new(),
         selected: 0,
         edit: None,
@@ -134,6 +130,7 @@ pub fn run(
         mouse: None,
         visible: true,
         mods: ModifiersState::empty(),
+        scroll_x: 0.0,
     };
     event_loop.run_app(&mut ui)?;
     Ok(())
@@ -155,6 +152,11 @@ impl ApplicationHandler<Command> for Ui {
         let surface = softbuffer::Surface::new(&context, window.clone()).expect("surface");
         self.window = Some(window);
         self.surface = Some(surface);
+        // background-first: the overlay stays hidden until shortcut/CLI/tray
+        if let Some(w) = &self.window {
+            w.set_visible(false);
+        }
+        self.visible = false;
         self.refresh_items();
     }
 
@@ -165,17 +167,19 @@ impl ApplicationHandler<Command> for Ui {
                 std::process::exit(0);
             }
             Command::Toggle => {
-                if let Some(w) = &self.window {
-                    if self.visible {
+                self.settings = false;
+                if self.visible {
+                    if let Some(w) = &self.window {
                         w.set_visible(false);
-                        self.visible = false;
-                    } else {
-                        w.set_visible(true);
-                        w.focus_window();
-                        self.visible = true;
-                        self.refresh_items();
                     }
+                    self.visible = false;
+                } else {
+                    self.show_overlay();
                 }
+            }
+            Command::Show => {
+                self.settings = false;
+                self.show_overlay();
             }
             Command::OpenSettings => {
                 self.settings = true;
@@ -213,6 +217,14 @@ impl ApplicationHandler<Command> for Ui {
                 self.mouse = Some((position.x as f32, position.y as f32));
             }
             WindowEvent::ModifiersChanged(m) => self.mods = m.state(),
+            WindowEvent::MouseWheel { delta, .. } => {
+                let dy = match delta {
+                    winit::event::MouseScrollDelta::LineDelta(_, y) => y * 60.0,
+                    winit::event::MouseScrollDelta::PixelDelta(p) => p.y as f32,
+                };
+                self.scroll_x = (self.scroll_x - dy).max(0.0);
+                self.request_redraw();
+            }
             WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
                 self.click();
             }
@@ -227,6 +239,15 @@ impl Ui {
         if let Some(w) = &self.window {
             w.request_redraw();
         }
+    }
+
+    fn show_overlay(&mut self) {
+        if let Some(w) = &self.window {
+            w.set_visible(true);
+            w.focus_window();
+        }
+        self.visible = true;
+        self.refresh_items();
     }
 
     fn refresh_items(&mut self) {
@@ -316,6 +337,13 @@ impl Ui {
             Hit::OpenSettings => {
                 self.settings = true;
                 self.stack_open = false;
+            }
+            Hit::CloseWindow => {
+                if let Some(w) = &self.window {
+                    w.set_visible(false);
+                    self.visible = false;
+                }
+                return;
             }
             Hit::StackToggle => self.stack_open = !self.stack_open,
             Hit::StackPasteNext => {
@@ -408,6 +436,16 @@ impl Ui {
         self.request_redraw();
     }
 
+    fn scroll_selected_into_view(&mut self) {
+        let x = self.selected as f32 * 241.0 - self.scroll_x;
+        if x < 0.0 {
+            self.scroll_x += x;
+        } else if x + 228.0 > 1240.0 - 210.0 {
+            self.scroll_x += x + 228.0 - (1240.0 - 210.0);
+        }
+        self.scroll_x = self.scroll_x.max(0.0);
+    }
+
     fn do_paste(&mut self, id: &str, plain: Option<bool>) {
         {
             let state_arc = self.state.clone();
@@ -438,6 +476,14 @@ impl Ui {
     }
 
     fn key(&mut self, ev: KeyEvent) {
+        if let Ok(dir) = std::env::var("CLIPDECK_DUMP_UI") {
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true)
+                .open(std::path::Path::new(&dir).join("keys.log"))
+            {
+                let _ = writeln!(f, "state={:?} logical={:?} text={:?}", ev.state, ev.logical_key, ev.text);
+            }
+        }
         if ev.state != ElementState::Pressed {
             return;
         }
@@ -499,10 +545,14 @@ impl Ui {
 
         match &ev.logical_key {
             Key::Named(NamedKey::Escape) => {
+                // Esc closes the overlay; transient UI state (edit/capture) is
+                // cancelled first so no unsaved draft is lost silently.
                 if self.settings {
                     self.settings = false;
+                    self.request_redraw();
                 } else if self.stack_open {
                     self.stack_open = false;
+                    self.request_redraw();
                 } else if let Some(w) = &self.window {
                     w.set_visible(false);
                     self.visible = false;
@@ -510,9 +560,11 @@ impl Ui {
             }
             Key::Named(NamedKey::ArrowRight) | Key::Named(NamedKey::Tab) if !shift => {
                 self.selected = (self.selected + 1).min(self.items.len().saturating_sub(1));
+                self.scroll_selected_into_view();
             }
             Key::Named(NamedKey::ArrowLeft) => {
                 self.selected = self.selected.saturating_sub(1);
+                self.scroll_selected_into_view();
             }
             Key::Named(NamedKey::Tab) if shift => {
                 self.selected = self.selected.saturating_sub(1);
@@ -585,10 +637,23 @@ impl Ui {
         let mut pm = Pixmap::new(w, h).expect("pixmap");
         self.hits.clear();
 
-        // glass panel background
-        round_rect(&mut pm, 0.0, 0.0, w as f32, h as f32, 22.0, rgba(14, 16, 26, 245));
+        // full opaque backdrop: a transparent window must never leak desktop
+        // content at the rounded corners (the v1 shadow-corner lesson).
+        pm.fill(Color::from_rgba8(10, 11, 18, 255));
+        round_rect(&mut pm, 6.0, 6.0, w as f32 - 12.0, h as f32 - 6.0, 18.0, rgba(16, 18, 28, 255));
+        stroke_round(&mut pm, 6.0, 6.0, w as f32 - 12.0, h as f32 - 6.0, 18.0, rgba(255, 255, 255, 14), 1.0);
         self.layout_and_draw(&mut pm, w as f32, h as f32);
 
+        if let Ok(dir) = std::env::var("CLIPDECK_DUMP_UI") {
+            self.font_probe(&dir);
+            let _ = pm.save_png(std::path::Path::new(&dir).join(format!(
+                "ui-{}.png",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis())
+                    .unwrap_or(0)
+            )));
+        }
         let Some(surface) = self.surface.as_mut() else { return };
         if let (Some(nzw), Some(nzh)) = (
             std::num::NonZeroU32::new(w),
@@ -605,19 +670,19 @@ impl Ui {
         }
     }
 
-    fn layout_and_draw(&mut self, pm: &mut Pixmap, _w: f32, _h: f32) {
+    fn layout_and_draw(&mut self, pm: &mut Pixmap, w: f32, h: f32) {
         // sidebar
-        self.text(pm, 30.0, 34.0, 13.0, "History", false, rgba(238, 240, 246, 235));
+        self.text_l(pm, 30.0, 34.0, 13.0, "History", false, rgba(238, 240, 246, 235));
         self.hit(18.0, 20.0, 150.0, 28.0, Hit::SetFilter(0));
         if self.filter == 0 {
             round_rect(pm, 18.0, 18.0, 152.0, 32.0, 10.0, rgba(143, 176, 255, 46));
         }
-        self.text(pm, 30.0, 66.0, 13.0, "Pinned", false, rgba(238, 240, 246, 190));
+        self.text_l(pm, 30.0, 66.0, 13.0, "Pinned", false, rgba(238, 240, 246, 190));
         self.hit(18.0, 52.0, 150.0, 28.0, Hit::SetFilter(1));
         if self.filter == 1 {
             round_rect(pm, 18.0, 50.0, 152.0, 32.0, 10.0, rgba(143, 176, 255, 46));
         }
-        self.text(pm, 30.0, 100.0, 10.0, "PINBOARDS", false, rgba(238, 240, 246, 120));
+        self.text_l(pm, 30.0, 100.0, 10.0, "PINBOARDS", false, rgba(238, 240, 246, 120));
         {
             let names: Vec<String> = self
                 .state
@@ -630,26 +695,26 @@ impl Ui {
                 .collect();
             for (n, name) in names.iter().enumerate() {
                 let y = 118.0 + n as f32 * 28.0;
-                self.text(pm, 30.0, y + 6.0, 12.5, name, false, rgba(238, 240, 246, 190));
+                self.text_l(pm, 30.0, y + 7.0, 12.0, name, false, rgba(238, 240, 246, 190));
                 self.hit(18.0, y - 6.0, 150.0, 26.0, Hit::SetFilter(n + 2));
                 if self.filter == n + 2 {
                     round_rect(pm, 18.0, y - 8.0, 152.0, 30.0, 10.0, rgba(143, 176, 255, 46));
                 }
             }
         }
-        self.text(pm, 30.0, H - 30.0, 12.0, "+ New", false, rgba(238, 240, 246, 140));
-        self.hit(18.0, H - 44.0, 150.0, 28.0, Hit::NewPinboard);
-        line(pm, 182.0, 16.0, 182.0, H - 12.0, rgba(255, 255, 255, 22));
+        self.text_l(pm, 30.0, h - 30.0, 12.0, "+ New", false, rgba(238, 240, 246, 140));
+        self.hit(18.0, h - 44.0, 150.0, 28.0, Hit::NewPinboard);
+        line(pm, 182.0, 16.0, 182.0, h - 12.0, rgba(255, 255, 255, 22));
 
         if self.settings {
-            self.draw_settings(pm);
+            self.draw_settings(pm, w, h);
             return;
         }
 
         // topbar: search + pills
-        round_rect(pm, 196.0, 18.0, W - 196.0 - 230.0, 34.0, 17.0, rgba(255, 255, 255, 16));
+        round_rect(pm, 196.0, 18.0, (w - 316.0 - 196.0).max(120.0), 34.0, 17.0, rgba(255, 255, 255, 16));
         let q = if self.query.is_empty() { "Search history…".to_string() } else { self.query.clone() };
-        self.text(pm, 212.0, 32.0, 13.0, &q, false, rgba(238, 240, 246, if self.query.is_empty() { 130 } else { 235 }));
+        self.text_l(pm, 212.0, 35.0, 13.0, &q, false, rgba(238, 240, 246, if self.query.is_empty() { 130 } else { 235 }));
         // stack chip
         {
             let stacked = self
@@ -663,43 +728,55 @@ impl Ui {
                 .count();
             if stacked > 0 {
                 let label = format!("Stack x{stacked}");
-                round_rect(pm, W - 224.0, 18.0, 92.0, 32.0, 16.0, rgba(143, 176, 255, 30));
-                self.text(pm, W - 210.0, 31.0, 12.0, &label, true, rgba(143, 176, 255, 235));
-                self.hit(W - 224.0, 18.0, 92.0, 32.0, Hit::StackToggle);
+                round_rect(pm, w - 306.0, 18.0, 92.0, 34.0, 17.0, rgba(143, 176, 255, 30));
+                self.text_c(pm, w - 260.0, 35.0, 12.0, &label, true, rgba(143, 176, 255, 235));
+                self.hit(w - 306.0, 18.0, 92.0, 34.0, Hit::StackToggle);
             }
         }
-        round_rect(pm, W - 124.0, 18.0, 52.0, 32.0, 16.0, rgba(255, 255, 255, 16));
-        self.text(pm, W - 112.0, 31.0, 12.0, "+ Pin", false, rgba(238, 240, 246, 200));
-        self.hit(W - 124.0, 18.0, 52.0, 32.0, Hit::NewPinboard);
-        round_rect(pm, W - 64.0, 18.0, 34.0, 32.0, 16.0, rgba(255, 255, 255, 16));
-        self.text(pm, W - 55.0, 31.0, 12.0, "cfg", false, rgba(238, 240, 246, 200));
-        self.hit(W - 64.0, 18.0, 34.0, 32.0, Hit::OpenSettings);
+        round_rect(pm, w - 206.0, 18.0, 52.0, 34.0, 17.0, rgba(255, 255, 255, 16));
+        self.text_c(pm, w - 180.0, 35.0, 12.0, "+ Pin", false, rgba(238, 240, 246, 200));
+        self.hit(w - 206.0, 18.0, 52.0, 34.0, Hit::NewPinboard);
+        round_rect(pm, w - 146.0, 18.0, 44.0, 34.0, 17.0, rgba(255, 255, 255, 16));
+        self.text_c(pm, w - 124.0, 35.0, 12.0, "cfg", false, rgba(238, 240, 246, 200));
+        self.hit(w - 146.0, 18.0, 44.0, 34.0, Hit::OpenSettings);
+        round_rect(pm, w - 86.0, 18.0, 34.0, 34.0, 17.0, rgba(255, 90, 110, 36));
+        icon_x(pm, w - 69.0, 35.0, 4.5, rgba(255, 123, 141, 235));
+        self.hit(w - 86.0, 18.0, 34.0, 34.0, Hit::CloseWindow);
 
-        // cards strip
-        let mut x = 196.0;
+        // cards strip: dynamic height + horizontal scroll (wheel), clipped to main column
+        let card_h = (h - 64.0 - 46.0).clamp(180.0, 252.0);
         let cards = self.items.clone();
+        let total_w = cards.len() as f32 * 241.0;
+        let visible_w = w - 210.0;
+        let max_scroll = (total_w - visible_w).max(0.0);
+        if self.scroll_x > max_scroll {
+            self.scroll_x = max_scroll;
+        }
+        let mut x = 196.0 - self.scroll_x;
         for (i, item) in cards.iter().enumerate() {
-            if x > W - 30.0 {
+            if x > w - 30.0 {
                 break;
             }
-            self.draw_card(pm, x, 64.0, 228.0, 252.0, i, item);
+            if x >= 190.0 {
+                self.draw_card(pm, x, 64.0, 228.0, card_h, i, item);
+            }
             x += 241.0;
         }
         if self.items.is_empty() {
-            self.text(pm, 420.0, 170.0, 15.0, "Clipboard history is empty", true, rgba(238, 240, 246, 200));
-            self.text(pm, 380.0, 196.0, 12.5, "Copy anything — it shows up here instantly.", false, rgba(238, 240, 246, 130));
+            self.text_c(pm, (w + 196.0) / 2.0, h / 2.0 - 8.0, 15.0, "Clipboard history is empty", true, rgba(238, 240, 246, 200));
+            self.text_c(pm, (w + 196.0) / 2.0, h / 2.0 + 18.0, 12.0, "Copy anything — it shows up here instantly.", false, rgba(238, 240, 246, 130));
         }
 
-        // hints
-        self.text(
-            pm, 260.0, H - 22.0, 10.5,
+        // hints: centered in the main column, clear of the cards
+        self.text_c(
+            pm, (w + 196.0) / 2.0, h - 12.0, 11.0,
             "<- -> navigate   Enter paste   Shift+Enter plain   E edit   Ctrl+C copy   Ctrl+S stack   Del delete   Esc close",
             false,
-            rgba(238, 240, 246, 130),
+            rgba(238, 240, 246, 150),
         );
 
         if self.stack_open {
-            self.draw_stack(pm);
+            self.draw_stack(pm, w);
         }
     }
 
@@ -711,11 +788,11 @@ impl Ui {
         }
         self.hit(x, y, w, h, Hit::Select(idx));
         // header buttons (appear area always reserved)
-        self.text(pm, x + w - 66.0, y + 8.0, 11.0, if item.pinned { "*" } else { "o" }, false, rgba(238, 240, 246, 200));
+        icon_pin(pm, x + w - 61.0, y + 13.0, item.pinned);
         self.hit(x + w - 72.0, y + 2.0, 22.0, 22.0, Hit::Pin(idx));
-        self.text(pm, x + w - 42.0, y + 8.0, 11.0, "ed", false, rgba(238, 240, 246, 200));
+        icon_edit(pm, x + w - 37.0, y + 13.0, rgba(238, 240, 246, 190));
         self.hit(x + w - 48.0, y + 2.0, 22.0, 22.0, Hit::Edit(idx));
-        self.text(pm, x + w - 20.0, y + 8.0, 11.0, "x", false, rgba(238, 240, 246, 200));
+        icon_x(pm, x + w - 15.0, y + 13.0, 4.0, rgba(238, 240, 246, 190));
         self.hit(x + w - 26.0, y + 2.0, 22.0, 22.0, Hit::Delete(idx));
 
         let py = y + 30.0;
@@ -742,18 +819,20 @@ impl Ui {
                 }
             }
             ItemType::Link => {
-                round_rect(pm, x + 16.0, py + 16.0, 44.0, 44.0, 11.0, rgba(109, 149, 255, 235));
+                round_rect(pm, x + 16.0, py + 14.0, 42.0, 42.0, 11.0, rgba(109, 149, 255, 235));
                 let letter: String = item.preview.chars().take(1).collect();
-                self.text(pm, x + 32.0, py + 30.0, 18.0, &letter, true, rgba(255, 255, 255, 255));
-                self.wrap(pm, x + 16.0, py + 76.0, w - 32.0, 13.0, &item.title, true);
-                self.text(pm, x + 16.0, py + ph - 24.0, 11.5, &item.preview, false, rgba(238, 240, 246, 130));
+                self.text_c(pm, x + 37.0, py + 35.0, 17.0, &letter, true, rgba(255, 255, 255, 255));
+                self.wrap(pm, x + 16.0, py + 72.0, w - 32.0, 13.0, &item.title, false);
+                if item.preview != item.title {
+                    self.text(pm, x + 16.0, py + 128.0, 11.0, &item.preview, false, rgba(238, 240, 246, 140));
+                }
             }
             ItemType::File => {
                 let mut ly = py + 12.0;
                 for f in item.content.lines().take(4) {
                     round_rect(pm, x + 12.0, ly, w - 24.0, 30.0, 8.0, rgba(255, 255, 255, 14));
                     let name = f.rsplit('/').next().unwrap_or(f);
-                    self.text(pm, x + 22.0, ly + 9.0, 11.5, name, false, rgba(238, 240, 246, 210));
+                    self.text_l(pm, x + 22.0, ly + 15.0, 11.0, name, false, rgba(238, 240, 246, 210));
                     ly += 37.0;
                 }
             }
@@ -776,89 +855,149 @@ impl Ui {
             ItemType::File => "Files",
             ItemType::Html => "Rich text",
         };
-        round_rect(pm, x + 12.0, y + h - 28.0, 54.0, 18.0, 7.0, rgba(143, 176, 255, 38));
-        self.text(pm, x + 18.0, y + h - 23.0, 9.5, badge, true, rgba(143, 176, 255, 235));
+        let badge_w = self.text_width(10.0, badge, true) + 16.0;
+        round_rect(pm, x + 12.0, y + h - 28.0, badge_w, 18.0, 7.0, rgba(143, 176, 255, 38));
+        self.text_c(pm, x + 12.0 + badge_w / 2.0, y + h - 19.0, 10.0, badge, true, rgba(143, 176, 255, 235));
+        let age = time_ago(item.created_at);
+        self.text_l(pm, x + 18.0 + badge_w, y + h - 19.0, 10.0, &age, false, rgba(238, 240, 246, 130));
         if item.stack_order.is_some() {
             let label = format!("#{}", item.stack_order.unwrap_or(0));
-            self.text(pm, x + 76.0, y + h - 23.0, 9.5, &label, true, rgba(143, 176, 255, 235));
+            self.text_l(pm, x + 62.0 + badge_w, y + h - 19.0, 10.0, &label, true, rgba(143, 176, 255, 235));
         }
     }
 
-    fn draw_stack(&mut self, pm: &mut Pixmap) {
+    fn draw_stack(&mut self, pm: &mut Pixmap, w: f32) {
         let state_arc = self.state.clone();
         let st = state_arc.lock().unwrap();
         let queued = st.store.stack_items();
         drop(st);
-        let x = W - 360.0;
+        let x = w - 360.0;
         let y = 60.0;
         round_rect(pm, x, y, 330.0, 240.0, 14.0, rgba(22, 25, 38, 250));
-        self.text(pm, x + 14.0, y + 12.0, 12.0, &format!("Paste stack ({})", queued.len()), true, rgba(238, 240, 246, 235));
-        self.text(pm, x + 240.0, y + 12.0, 11.0, "clear", false, rgba(238, 240, 246, 170));
+        self.text_l(pm, x + 14.0, y + 14.0, 12.0, &format!("Paste stack ({})", queued.len()), true, rgba(238, 240, 246, 235));
+        self.text_c(pm, x + 256.0, y + 14.0, 11.0, "clear", false, rgba(238, 240, 246, 170));
         self.hit(x + 234.0, y + 4.0, 44.0, 22.0, Hit::StackClear);
         for (i, item) in queued.iter().enumerate().take(5) {
             let ry = y + 40.0 + i as f32 * 30.0;
-            self.text(pm, x + 16.0, ry + 6.0, 11.0, &format!("{}", i + 1), true, rgba(143, 176, 255, 235));
-            self.text(pm, x + 40.0, ry + 6.0, 11.5, &item.title, false, rgba(238, 240, 246, 210));
-            self.text(pm, x + 280.0, ry + 6.0, 11.0, "x", false, rgba(238, 240, 246, 170));
+            self.text_c(pm, x + 24.0, ry + 12.0, 11.0, &format!("{}", i + 1), true, rgba(143, 176, 255, 235));
+            self.text_l(pm, x + 44.0, ry + 12.0, 11.5, &item.title, false, rgba(238, 240, 246, 210));
+            self.text_c(pm, x + 284.0, ry + 12.0, 11.0, "x", false, rgba(238, 240, 246, 170));
             self.hit(x + 272.0, ry, 24.0, 24.0, Hit::StackRemove(i));
         }
         round_rect(pm, x + 12.0, y + 200.0, 306.0, 30.0, 9.0, rgba(109, 149, 255, 235));
-        self.text(pm, x + 110.0, y + 208.0, 12.0, "Paste next", true, rgba(255, 255, 255, 255));
+        self.text_c(pm, x + 165.0, y + 215.0, 12.0, "Paste next", true, rgba(255, 255, 255, 255));
         self.hit(x + 12.0, y + 200.0, 306.0, 30.0, Hit::StackPasteNext);
     }
 
-    fn draw_settings(&mut self, pm: &mut Pixmap) {
+    fn draw_settings(&mut self, pm: &mut Pixmap, w: f32, h: f32) {
         let state_arc = self.state.clone();
-        let st = state_arc.lock().unwrap();
-        let s = st.store.settings.clone();
-        drop(st);
-        self.text(pm, 200.0, 30.0, 15.0, "ClipDeck Settings", true, rgba(238, 240, 246, 245));
-        let rows: [(f32, &str, bool, Hit); 11] = [
-            (56.0, "Watch clipboard", s.watch_enabled, Hit::Toggle("watch")),
-            (86.0, "Play sound on copy", s.sound_copy, Hit::Toggle("sound_copy")),
-            (116.0, "Play sound on paste", s.sound_paste, Hit::Toggle("sound_paste")),
-            (146.0, "Ignore transient content", s.ignore_transient, Hit::Toggle("transient")),
-            (176.0, "Ignore confidential content", s.ignore_confidential, Hit::Toggle("confidential")),
-            (206.0, "Generate link previews", s.generate_link_previews, Hit::Toggle("link_previews")),
-            (236.0, "Always paste as plain text", s.paste_as_plain_text, Hit::Toggle("plain")),
-            (266.0, "Start ClipDeck at login", s.launch_at_login, Hit::Toggle("login")),
-            (296.0, "Show overlay during screen sharing", s.show_in_screen_share, Hit::Toggle("share")),
-            (326.0, "Paste stack: LIFO (off = FIFO)", s.stack_direction == "lifo", Hit::Toggle("stack_dir")),
-            (356.0, "Global shortcut", false, Hit::ShortcutCapture),
+        let s = state_arc.lock().unwrap().store.settings.clone();
+        let left = 210.0f32;
+        let right = (w - 90.0).max(left + 320.0);
+        self.text_l(pm, left, 30.0, 15.0, "ClipDeck Settings", true, rgba(238, 240, 246, 245));
+
+        let rows: [(&str, bool, Hit); 11] = [
+            ("Watch clipboard", s.watch_enabled, Hit::Toggle("watch")),
+            ("Play sound on copy", s.sound_copy, Hit::Toggle("sound_copy")),
+            ("Play sound on paste", s.sound_paste, Hit::Toggle("sound_paste")),
+            ("Ignore transient content", s.ignore_transient, Hit::Toggle("transient")),
+            ("Ignore confidential content", s.ignore_confidential, Hit::Toggle("confidential")),
+            ("Generate link previews", s.generate_link_previews, Hit::Toggle("link_previews")),
+            ("Always paste as plain text", s.paste_as_plain_text, Hit::Toggle("plain")),
+            ("Start ClipDeck at login", s.launch_at_login, Hit::Toggle("login")),
+            ("Show overlay during screen sharing", s.show_in_screen_share, Hit::Toggle("share")),
+            ("Paste stack: LIFO (off = FIFO)", s.stack_direction == "lifo", Hit::Toggle("stack_dir")),
+            ("Global shortcut", false, Hit::ShortcutCapture),
         ];
-        for (y, label, on, hit) in rows {
-            self.text(pm, 210.0, y + 6.0, 12.5, label, false, rgba(238, 240, 246, 220));
-            if matches!(hit, Hit::ShortcutCapture) {
-                let shown = if self.capture { "Press keys… (Esc cancels)".to_string() } else { pretty_accel(&s.shortcut) };
-                round_rect(pm, 640.0, y, 220.0, 26.0, 8.0, if self.capture { rgba(143, 176, 255, 40) } else { rgba(255, 255, 255, 18) });
-                self.text(pm, 650.0, y + 6.0, 11.5, &shown, true, rgba(238, 240, 246, 235));
-            } else {
-                let (bx, bg) = if on { (838.0, rgba(109, 149, 255, 235)) } else { (812.0, rgba(255, 255, 255, 30)) };
-                round_rect(pm, bx, y, 46.0, 26.0, 13.0, bg);
-                round_rect(pm, if on { bx + 24.0 } else { bx + 4.0 }, y + 4.0, 18.0, 18.0, 9.0, rgba(255, 255, 255, 245));
+        let row_h = 24.0f32;
+        let top = 52.0f32;
+        for (n, (label, on, hit)) in rows.iter().enumerate() {
+            let y = top + n as f32 * row_h;
+            self.text_l(pm, left, y + 12.0, 12.0, label, false, rgba(238, 240, 246, 220));
+            match hit {
+                Hit::ShortcutCapture => {
+                    let shown = if self.capture {
+                        "Press keys\u{2026} (Esc cancels)".to_string()
+                    } else {
+                        clipdeck_core::pretty_accel(&s.shortcut)
+                    };
+                    let bx = (right - 100.0).max(left + 120.0);
+                    round_rect(pm, bx, y + 2.0, (w - 40.0 - bx).min(190.0), 21.0, 7.0,
+                        if self.capture { rgba(143, 176, 255, 46) } else { rgba(255, 255, 255, 16) });
+                    self.text_c(pm, bx + (w - 40.0 - bx).min(190.0) / 2.0, y + 12.0, 11.0, &shown, true, rgba(238, 240, 246, 235));
+                }
+                _ => {
+                    // one fixed track; only the knob moves
+                    let bg = if *on { rgba(109, 149, 255, 235) } else { rgba(255, 255, 255, 26) };
+                    let tx = (w - 40.0 - 50.0).max(left + 200.0);
+                    round_rect(pm, tx, y + 1.0, 50.0, 22.0, 11.0, bg);
+                    round_rect(pm, if *on { tx + 30.0 } else { tx + 3.0 }, y + 4.0, 16.0, 16.0, 8.0, rgba(255, 255, 255, 245));
+                }
             }
-            self.hit(200.0, y - 2.0, 700.0, 28.0, hit);
+            self.hit(left, y, (w - 40.0) - left, row_h, *hit);
         }
-        round_rect(pm, 210.0, H - 60.0, 110.0, 30.0, 8.0, rgba(255, 255, 255, 18));
-        self.text(pm, 232.0, H - 52.0, 12.0, "Export", true, rgba(238, 240, 246, 235));
-        self.hit(210.0, H - 60.0, 110.0, 30.0, Hit::Export);
-        round_rect(pm, 330.0, H - 60.0, 110.0, 30.0, 8.0, rgba(255, 255, 255, 18));
-        self.text(pm, 352.0, H - 52.0, 12.0, "Import", true, rgba(238, 240, 246, 235));
-        self.hit(330.0, H - 60.0, 110.0, 30.0, Hit::Import);
+
+        // footer actions, below all rows
+        let by = top + rows.len() as f32 * row_h + 10.0;
+        if by + 28.0 <= h - 6.0 {
+            round_rect(pm, left, by, 104.0, 28.0, 8.0, rgba(255, 255, 255, 16));
+            self.text_c(pm, left + 52.0, by + 14.0, 12.0, "Export", true, rgba(238, 240, 246, 235));
+            self.hit(left, by, 104.0, 28.0, Hit::Export);
+            round_rect(pm, left + 116.0, by, 104.0, 28.0, 8.0, rgba(255, 255, 255, 16));
+            self.text_c(pm, left + 168.0, by + 14.0, 12.0, "Import", true, rgba(238, 240, 246, 235));
+            self.hit(left + 116.0, by, 104.0, 28.0, Hit::Import);
+        }
     }
 
     /* ---------- text primitives ---------- */
+
+    /// Diagnostic: render sample strings at integer sizes to isolate the
+    /// glyph-advance artifact without the rest of the UI.
+    fn font_probe(&self, dir: &str) {
+        let mut pm = Pixmap::new(560, 160).unwrap();
+        pm.fill(Color::from_rgba8(14, 16, 26, 255));
+        self.text(&mut pm, 10.0, 40.0, 20.0, "History close", false, [255, 255, 255, 255]);
+        self.text(&mut pm, 10.0, 80.0, 13.0, "History close", false, [255, 255, 255, 255]);
+        self.text(&mut pm, 10.0, 110.0, 11.0, "History close", true, [255, 255, 255, 255]);
+        // report first few advances for comparison with pixel widths
+        let mut report = String::new();
+        for ch in "History".chars() {
+            let (m, bm) = self.font.rasterize(ch, 20.0);
+            report.push_str(&format!("{ch}: adv={:.2} w={} h={} xmin={} ymin={} bm_len={}\n",
+                m.advance_width, m.width, m.height, m.xmin, m.ymin, bm.len()));
+        }
+        std::fs::write(std::path::Path::new(dir).join("font-probe.txt"), report).ok();
+        pm.save_png(std::path::Path::new(dir).join("font-probe.png")).ok();
+    }
+
+    /// Visual centering: baseline = cy + px*0.345 puts the glyph body's
+    /// optical center on cy (verified against frame dumps).
+    fn text_l(&self, pm: &mut Pixmap, x: f32, cy: f32, px: f32, s: &str, strong: bool, color: [u8; 4]) {
+        self.text(pm, x, cy + px * 0.345, px, s, strong, color);
+    }
+
+    /// Horizontally + vertically centered on (cx, cy) using measured width.
+    fn text_c(&self, pm: &mut Pixmap, cx: f32, cy: f32, px: f32, s: &str, strong: bool, color: [u8; 4]) {
+        let font = if strong { &self.medium } else { &self.font };
+        let width: f32 = s.chars().map(|c| font.metrics(c, px).advance_width).sum();
+        self.text(pm, cx - width / 2.0, cy + px * 0.345, px, s, strong, color);
+    }
+
+    fn text_width(&self, px: f32, s: &str, strong: bool) -> f32 {
+        let font = if strong { &self.medium } else { &self.font };
+        s.chars().map(|c| font.metrics(c, px).advance_width).sum()
+    }
 
     fn hit(&mut self, x: f32, y: f32, w: f32, h: f32, action: Hit) {
         self.hits.push((x, y, w, h, action));
     }
 
-    fn text(&self, pm: &mut Pixmap, x: f32, baseline: f32, px: f32, s: &str, mono: bool, color: [u8; 4]) {
-        let font = if mono { &self.mono } else { &self.font };
+    fn text(&self, pm: &mut Pixmap, x: f32, baseline: f32, px: f32, s: &str, strong: bool, color: [u8; 4]) {
+        let font = if strong { &self.medium } else { &self.font };
         let mut pen = x;
         for ch in s.chars() {
             let (m, bitmap) = font.rasterize(ch, px);
-            blit(pm, (pen + m.xmin as f32) as i32, (baseline + m.ymin as f32) as i32, m.width, m.height, &bitmap, color);
+            blit(pm, (pen + m.xmin as f32) as i32, (baseline - m.ymin as f32 - m.height as f32) as i32, m.width, m.height, &bitmap, color);
             pen += m.advance_width;
         }
     }
@@ -869,37 +1008,108 @@ impl Ui {
 
     fn wrap_lines(&self, pm: &mut Pixmap, x: f32, y: f32, max_w: f32, px: f32, s: &str, mono: bool, max_lines: usize) {
         let font = if mono { &self.mono } else { &self.font };
-        let mut line = String::new();
+        let _ = &self.medium;
         let mut ly = y;
         let mut lines = 0;
-        for ch in s.chars() {
-            let width: f32 = font
-                .horizontal_line_metrics(px)
-                .map(|m| m.new_line_size)
-                .unwrap_or(px);
-            let _ = width;
-            let candidate = format!("{line}{ch}");
-            let w: f32 = candidate
-                .chars()
-                .map(|c| font.metrics(c, px).advance_width)
-                .sum();
-            if w > max_w && !line.is_empty() {
+        // explicit paragraphs first, then word-wrap each paragraph
+        for para in s.split('\n') {
+            if lines >= max_lines {
+                return;
+            }
+            let mut words: Vec<String> = Vec::new();
+            let mut word = String::new();
+            for ch in para.chars() {
+                if ch == ' ' && !word.is_empty() {
+                    words.push(std::mem::take(&mut word));
+                } else {
+                    word.push(ch);
+                }
+            }
+            if !word.is_empty() {
+                words.push(word);
+            }
+            if words.is_empty() {
+                ly += px * 1.55;
+                lines += 1;
+                continue;
+            }
+            let mut line = String::new();
+            for w in words {
+                let candidate = if line.is_empty() { w.clone() } else { format!("{line} {w}") };
+                let width: f32 = candidate.chars().map(|c| font.metrics(c, px).advance_width).sum();
+                if width > max_w && !line.is_empty() {
+                    self.text(pm, x, ly + px, px, &line, mono, rgba(238, 240, 246, 220));
+                    ly += px * 1.55;
+                    lines += 1;
+                    if lines >= max_lines {
+                        return;
+                    }
+                    line = w;
+                } else {
+                    line = candidate;
+                }
+            }
+            if !line.is_empty() {
                 self.text(pm, x, ly + px, px, &line, mono, rgba(238, 240, 246, 220));
                 ly += px * 1.55;
                 lines += 1;
-                line = ch.to_string();
-                if lines >= max_lines {
-                    return;
-                }
-            } else {
-                line = candidate;
             }
-        }
-        if !line.is_empty() && lines < max_lines {
-            self.text(pm, x, ly + px, px, &line, mono, rgba(238, 240, 246, 220));
         }
     }
 
+}
+
+fn time_ago(created_at_ms: i64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let s = ((now - created_at_ms) / 1000).max(0);
+    if s < 60 {
+        "now".into()
+    } else if s < 3600 {
+        format!("{}m", s / 60)
+    } else if s < 86400 {
+        format!("{}h", s / 3600)
+    } else {
+        format!("{}d", s / 86400)
+    }
+}
+
+/// Vector marks drawn inside button boxes (crisper than glyphs).
+fn icon_x(pm: &mut Pixmap, cx: f32, cy: f32, r: f32, c: [u8; 4]) {
+    line(pm, cx - r, cy - r, cx + r, cy + r, c);
+    line(pm, cx + r, cy - r, cx - r, cy + r, c);
+}
+
+fn icon_pin(pm: &mut Pixmap, cx: f32, cy: f32, filled: bool) {
+    if filled {
+        pm.fill_path(
+            &tiny_skia::PathBuilder::from_circle(cx, cy, 4.2).unwrap(),
+            &color_paint(rgba(143, 176, 255, 235)),
+            FillRule::Winding,
+            Transform::identity(),
+            None,
+        );
+    } else {
+        if let Some(path) = tiny_skia::PathBuilder::from_circle(cx, cy, 4.2) {
+            pm.stroke_path(
+                &path,
+                &color_paint(rgba(238, 240, 246, 190)),
+                &tiny_skia::Stroke { width: 1.3, ..Default::default() },
+                Transform::identity(),
+                None,
+            );
+        }
+    }
+}
+
+fn icon_edit(pm: &mut Pixmap, cx: f32, cy: f32, c: [u8; 4]) {
+    // pencil: doubled body stroke + tip crossline + eraser stub
+    line(pm, cx - 5.5, cy + 4.5, cx + 3.0, cy - 4.0, c);
+    line(pm, cx - 4.5, cy + 5.5, cx + 4.0, cy - 3.0, c);
+    line(pm, cx + 2.5, cy - 5.5, cx + 5.5, cy - 5.5, c);
+    line(pm, cx + 4.0, cy - 7.0, cx + 5.5, cy - 4.0, c);
 }
 
 fn rgba(r: u8, g: u8, b: u8, a: u8) -> [u8; 4] {
