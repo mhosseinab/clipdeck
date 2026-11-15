@@ -72,6 +72,11 @@ For the Debian package, use `clipdeck toggle`. ClipDeck must already be running.
 Settings → Global shortcut → **Copy Command** supplies the right command for
 your installation. Choose keys that do not conflict with another application.
 
+For a copy-paste command that registers Ctrl+Shift+V without replacing existing
+GNOME shortcuts, expand the setup section in the [README](../README.md#get-started).
+Run it from a normal desktop terminal. The Snap's **Keyboard Settings** button
+may fail to open the host application; open GNOME Settings directly instead.
+
 ### CLI
 
 For the Snap, use `snap run clipdeck` followed by a command:

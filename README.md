@@ -42,6 +42,37 @@ On **X11**, open the overlay with **Ctrl+Shift+V**. On **GNOME Wayland**, create
 custom keyboard shortcut with the command `/snap/bin/clipdeck toggle`.
 ClipDeck must already be running. [Shortcut setup →](docs/usage.md#keyboard-shortcut)
 
+<details>
+<summary>Enable Ctrl+Shift+V for the Snap on GNOME Wayland</summary>
+
+Run this in your normal desktop terminal. It adds the ClipDeck shortcut while
+keeping your existing custom shortcuts:
+
+```bash
+python3 - <<'PY'
+import ast
+import subprocess
+
+schema = "org.gnome.settings-daemon.plugins.media-keys"
+path = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/clipdeck/"
+
+def settings(*args):
+    return subprocess.check_output(["gsettings", *args], text=True).strip()
+
+bindings = ast.literal_eval(settings("get", schema, "custom-keybindings").removeprefix("@as "))
+for key, value in {"name": "ClipDeck", "command": "/snap/bin/clipdeck toggle", "binding": "<Control><Shift>v"}.items():
+    settings("set", f"{schema}.custom-keybinding:{path}", key, repr(value))
+if path not in bindings:
+    settings("set", schema, "custom-keybindings", repr([*bindings, path]))
+print("ClipDeck shortcut enabled: Ctrl+Shift+V")
+PY
+```
+
+The Snap's **Keyboard Settings** button may be unable to launch the host's
+settings application. Use this command or open GNOME Settings directly.
+
+</details>
+
 Encrypted history is optional and uses your desktop keyring. Exports and the
 system clipboard stay plaintext. Pause watching when handling sensitive content.
 [Privacy and backups →](docs/usage.md#privacy-and-backups)
