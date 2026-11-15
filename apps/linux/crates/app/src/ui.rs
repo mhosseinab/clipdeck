@@ -35,8 +35,6 @@ const KEYBOARD_HINTS: [(&str, &str); 9] = [("← | →", "Select"), ("↵", "Cop
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Hit {
     Select(usize),
-    Paste(usize),
-    Copy(usize),
     Delete(usize),
     Pin(usize),
     Edit(usize),
@@ -198,7 +196,7 @@ impl Ui {
             AppEvent::Written { purpose } => {
                 // Clipboard completion never launches keyboard/input tools.
                 match purpose {
-                    WritePurpose::Paste | WritePurpose::StackPaste => {
+                    WritePurpose::StackPaste => {
                         let mut fx = Effects::none();
                         fx.sound = Some("paste");
                         fx
@@ -245,7 +243,6 @@ impl Ui {
             }
             AppEvent::ToggleWatch => self.app.toggle_watch(),
             AppEvent::Copy { id, purpose } => self.app.copy(&id, purpose),
-            AppEvent::Paste { id, plain } => self.app.paste(&id, plain),
             AppEvent::Activate { id, plain } => self.app.activate(&id, plain),
             AppEvent::StackPush { id } => self.app.stack_push(&id),
             AppEvent::StackPop => self.app.stack_pop(),
@@ -294,12 +291,7 @@ impl Ui {
                 if self.setting_unavailable_reason(key).is_some() { Effects::none() }
                 else { self.app.toggle_setting(key) }
             },
-            AppEvent::Export { path } => {
-                self.app.export_to(&path);
-                Effects::none()
-            }
-            AppEvent::Import { path } => self.app.import_from(&path),
-            AppEvent::Refresh => Effects::none(),
+
         };
         self.app.save();
         self.run_effects(effects);
@@ -746,16 +738,6 @@ impl Ui {
             Hit::Select(i) => {
                 if let Some(id) = self.items.get(i).map(|item| item.id.clone()) {
                     self.select_card(&id, x, y);
-                }
-            }
-            Hit::Paste(i) => {
-                if let Some(it) = self.items.get(i) {
-                    self.apply(AppEvent::Paste { id: it.id.clone(), plain: None });
-                }
-            }
-            Hit::Copy(i) => {
-                if let Some(it) = self.items.get(i) {
-                    self.apply(AppEvent::Copy { id: it.id.clone(), purpose: WritePurpose::Copy });
                 }
             }
             Hit::Delete(i) => self.request_delete_clip(i),
@@ -1618,7 +1600,7 @@ mod tests {
         let fonts = Fonts::bundled();
         for (key, label) in KEYBOARD_HINTS {
             for ch in key.chars() {
-                assert_ne!(fonts.medium.lookup_glyph_index(ch), 0, "unsupported key glyph {ch}");
+                assert!(is_key_symbol(ch) || fonts.medium.lookup_glyph_index(ch) != 0, "unsupported key glyph {ch}");
             }
             for ch in label.chars() {
                 assert_ne!(fonts.regular.lookup_glyph_index(ch), 0, "unsupported label glyph {ch}");

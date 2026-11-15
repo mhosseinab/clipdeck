@@ -76,8 +76,7 @@ pub fn spawn(events: EventLoopProxy<AppEvent>, accel_rx: Receiver<String>, initi
     std::thread::spawn(move || {
         install_tolerant_x_error_handler();
         let Ok(manager) = GlobalHotKeyManager::new() else { return };
-        let mut current: Option<HotKey> = None;
-        let mut register = |manager: &GlobalHotKeyManager, accel: &str| -> Option<HotKey> {
+        let register = |manager: &GlobalHotKeyManager, accel: &str| -> Option<HotKey> {
             let hk = parse_hotkey(accel)?;
             if manager.register(hk).is_ok() {
                 Some(hk)
@@ -85,7 +84,7 @@ pub fn spawn(events: EventLoopProxy<AppEvent>, accel_rx: Receiver<String>, initi
                 None
             }
         };
-        current = register(&manager, &initial);
+        let mut current = register(&manager, &initial);
 
         let key_rx = GlobalHotKeyEvent::receiver();
         loop {

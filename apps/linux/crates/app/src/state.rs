@@ -31,7 +31,6 @@ impl Effects {
 pub struct AppState {
     pub store: Store,
     sync: SyncStore,
-    pub last_app: Option<String>,
     pub generation: u64,
 }
 
@@ -39,7 +38,7 @@ impl AppState {
     pub fn open(user_data: &Path) -> AppState {
         let store = Store::open(user_data);
         let sync = SyncStore::new(&store.settings.sync_directory);
-        AppState { store, sync, last_app: None, generation: 0 }
+        AppState { store, sync, generation: 0 }
     }
 
     pub fn settings(&self) -> &Settings {
@@ -57,7 +56,6 @@ impl AppState {
         if !self.store.settings.watch_enabled {
             return Effects::none();
         }
-        self.last_app = source_app.clone();
         let s = self.store.settings.clone();
         if let Some(app) = source_app.as_ref().map(|a| a.to_lowercase()) {
             let blocked = s
@@ -98,25 +96,6 @@ impl AppState {
             }
         }
         WritePayload::Text(item.content.clone())
-    }
-
-    /// §7 paste: resolve plain policy, queue the write, run hooks, hide.
-    pub fn paste(&mut self, id: &str, plain: Option<bool>) -> Effects {
-        let Some(item) = self.store.find(id).cloned() else { return Effects::none() };
-        let s = self.store.settings.clone();
-        let rule_plain = self
-            .last_app
-            .as_ref()
-            .map(|a| s.plain_text_apps.iter().any(|p| !p.is_empty() && a.to_lowercase().contains(&p.to_lowercase())))
-            .unwrap_or(false);
-        let use_plain = plain.unwrap_or(s.paste_as_plain_text || rule_plain);
-        let payload = self.payload_for(&item, use_plain);
-        let mut fx = Effects::none();
-        fx.writes.push((payload, WritePurpose::Paste));
-        fx.hooks.push(("paste", item.content.clone()));
-        fx.hidden = true;
-        self.bump();
-        fx
     }
 
     /// Linux overlay activation copies and closes; it never injects input.
@@ -277,18 +256,6 @@ impl AppState {
             effects.watching = Some(self.store.settings.watch_enabled);
         }
         effects
-    }
-
-    pub fn export_to(&mut self, path: &str) {
-        std::fs::write(path, self.store.export_json()).ok();
-    }
-
-    pub fn import_from(&mut self, path: &str) -> Effects {
-        if let Ok(raw) = std::fs::read_to_string(path) {
-            self.store.import_json(&raw);
-        }
-        self.bump();
-        Effects::none()
     }
 
     /* ---------- data access (read side) ---------- */

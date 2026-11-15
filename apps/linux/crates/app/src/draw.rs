@@ -4,8 +4,6 @@
 use fontdue::Font;
 use tiny_skia::{FillRule, Paint, PathBuilder, Pixmap, PremultipliedColorU8, Transform};
 
-pub const ELLIPSIS: &str = "\u{2026}";
-
 /// Visual-center baseline bias (verified against frame dumps).
 const CENTER_BIAS: f32 = 0.345;
 
@@ -48,7 +46,7 @@ impl Fonts {
     }
 
     pub fn width(&self, px: f32, s: &str, face: Face) -> f32 {
-        s.chars().map(|c| self.font(face).metrics(c, px).advance_width).sum()
+        s.chars().map(|c| if is_key_symbol(c) { px } else { self.font(face).metrics(c, px).advance_width }).sum()
     }
 
     /// Draw with `baseline` as the text baseline.
@@ -56,6 +54,11 @@ impl Fonts {
         let font = self.font(face);
         let mut pen = x;
         for ch in s.chars() {
+            if is_key_symbol(ch) {
+                key_symbol(pm, pen, baseline - px * 0.75, px, ch, color);
+                pen += px;
+                continue;
+            }
             let (m, bitmap) = font.rasterize(ch, px);
             blit(pm, (pen + m.xmin as f32) as i32, (baseline - m.ymin as f32 - m.height as f32) as i32, m.width, m.height, &bitmap, color);
             pen += m.advance_width;
@@ -77,8 +80,7 @@ impl Fonts {
     /// word-wraps on spaces, hard-breaks words longer than `max_w`, honors `\n`,
     /// and stops at `max_lines`.
     pub fn layout_lines(&self, max_w: f32, px: f32, s: &str, face: Face, max_lines: usize) -> Vec<String> {
-        let font = self.font(face);
-        let measure = |t: &str| -> f32 { t.chars().map(|c| font.metrics(c, px).advance_width).sum() };
+        let measure = |t: &str| self.width(px, t, face);
         let mut out: Vec<String> = Vec::new();
         for para in s.split('\n') {
             if out.len() >= max_lines {
@@ -138,6 +140,20 @@ impl Fonts {
             ly += px * LINE_ADVANCE;
         }
     }
+}
+
+/// Keyboard symbols use UI strokes because the bundled fonts lack these glyphs.
+pub fn is_key_symbol(ch: char) -> bool {
+    matches!(ch, '←' | '→' | '↵')
+}
+
+fn key_symbol(pm: &mut Pixmap, x: f32, y: f32, px: f32, ch: char, color: [u8;4]) {
+    let (tip, tail, wing, center) = if ch == '→' { (0.8,0.2,0.55,0.4) }
+        else if ch == '↵' { (0.2,0.8,0.45,0.6) } else { (0.2,0.8,0.45,0.4) };
+    line(pm, x+tip*px, y+center*px, x+tail*px, y+center*px, color);
+    line(pm, x+tip*px, y+center*px, x+wing*px, y+(center-0.25)*px, color);
+    line(pm, x+tip*px, y+center*px, x+wing*px, y+(center+0.25)*px, color);
+    if ch == '↵' { line(pm, x+tail*px, y+0.05*px, x+tail*px, y+center*px, color); }
 }
 
 /* ---------- shapes ---------- */
@@ -202,7 +218,7 @@ fn blit(pm: &mut Pixmap, x: i32, y: i32, w: usize, h: usize, cov: &[u8], color: 
             if dx < 0 || dy < 0 || dx >= pw || dy >= ph {
                 continue;
             }
-            let a = cov[(row as usize * w + col as usize)] as u32;
+            let a = cov[row as usize * w + col as usize] as u32;
             if a == 0 {
                 continue;
             }
@@ -362,6 +378,24 @@ impl ThumbnailCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keyboard_symbols_have_distinct_shapes_and_fixed_width() {
+        let fonts = Fonts::bundled();
+        let mut rendered = Vec::new();
+        for ch in ['←', '→', '↵'] {
+            assert_eq!(fonts.width(12.0, &ch.to_string(), Face::Medium), 12.0);
+            let mut pm = Pixmap::new(24, 24).unwrap();
+            fonts.text(&mut pm, 4.0, 18.0, 12.0, &ch.to_string(), Face::Medium, rgba(255,255,255,255));
+            let ink: Vec<_> = pm.pixels().iter().enumerate().filter(|(_,p)| p.alpha()>0).map(|(i,_)| (i%24,i/24)).collect();
+            assert!(ink.len()>8, "symbol has no visible strokes: {ch}");
+            assert!(ink.iter().all(|(x,y)| (4..16).contains(x) && (8..20).contains(y)));
+            rendered.push(pm.data().to_vec());
+        }
+        assert_ne!(rendered[0],rendered[1]);
+        assert_ne!(rendered[0],rendered[2]);
+        assert_ne!(rendered[1],rendered[2]);
+    }
 
     #[test]
     fn fit_lines_uses_line_advance() {

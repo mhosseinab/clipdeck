@@ -9,7 +9,6 @@ use clipdeck_core::ClipItem;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WritePurpose {
     Copy,
-    Paste,
     /// Stack clipboard write (no synthetic typing).
     StackPaste,
     /// Tray "recent item" click.
@@ -43,7 +42,6 @@ pub enum AppEvent {
     /* state mutations (all funneled through the one dispatcher) */
     ToggleWatch,
     Copy { id: String, purpose: WritePurpose },
-    Paste { id: String, plain: Option<bool> },
     Activate { id: String, plain: bool },
     StackPush { id: String },
     StackPop,
@@ -58,7 +56,4 @@ pub enum AppEvent {
     SaveEdit { id: String, content: String },
     SetShortcut { accel: String },
     ToggleSetting { key: &'static str },
-    Export { path: String },
-    Import { path: String },
-    Refresh,
 }
