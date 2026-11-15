@@ -7,7 +7,7 @@ For a quick start, see the [README](../README.md).
 
 ### Snap Store — Ubuntu and other Snap-enabled distributions
 
-The stable Snap is available for **amd64 (x86_64)**.
+The stable Snap is available for **amd64 (x86_64)** and **arm64 (AArch64)**.
 
 ```bash
 sudo snap install clipdeck

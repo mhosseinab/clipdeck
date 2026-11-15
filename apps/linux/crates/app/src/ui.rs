@@ -2169,7 +2169,7 @@ mod tests {
     }
 
     #[test]
-    fn shortcut_copy_queues_the_running_executable_command() {
+    fn shortcut_copy_queues_the_installation_command() {
         let (mut ui, worker) = fixture_ui_with_worker();
         ui.settings = true;
         ui.render_frame(W as u32, H as u32);
@@ -2177,7 +2177,11 @@ mod tests {
         let WorkerCmd::Write { payload, purpose } = worker.try_recv().expect("Copy Command did not queue a clipboard write") else { panic!("expected clipboard write") };
         let crate::events::WritePayload::Text(command) = payload else { panic!("shortcut command is not text") };
         assert_eq!(purpose, WritePurpose::Copy);
-        assert!(command.contains(std::env::current_exe().unwrap().to_string_lossy().as_ref()));
+        if std::env::var_os("SNAP").is_some() {
+            assert_eq!(command, "\"/snap/bin/clipdeck\" toggle");
+        } else {
+            assert!(command.contains(std::env::current_exe().unwrap().to_string_lossy().as_ref()));
+        }
         assert!(command.ends_with(" toggle"));
         assert!(ui.settings);
         assert!(ui.app.store.is_empty());

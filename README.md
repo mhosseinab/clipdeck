@@ -24,7 +24,7 @@ sudo snap connect clipdeck:password-manager-service
 
 This connection is optional for plaintext history.
 
-The Snap supports **amd64 (x86_64)**. Debian packages for **amd64 and arm64**
+The Snap supports **amd64 (x86_64) and arm64 (AArch64)**. Debian packages for both
 are available from [GitHub Releases](https://github.com/mhosseinab/clipdeck/releases/latest).
 See the [installation guide](docs/usage.md#install) for setup and encryption.
 

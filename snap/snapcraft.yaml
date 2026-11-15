@@ -12,6 +12,9 @@ contact: https://github.com/mhosseinab/clipdeck/issues
 issues: https://github.com/mhosseinab/clipdeck/issues
 source-code: https://github.com/mhosseinab/clipdeck
 base: core24
+platforms:
+  amd64:
+  arm64:
 grade: stable
 confinement: strict
 icon: apps/linux/crates/app/assets/icon.png
@@ -64,6 +67,8 @@ parts:
       - libwayland-egl1
     override-build: |
       cd apps/linux
+      cargo run --locked --release --package clipdeck-spec --
+      cargo test --locked --release --workspace
       cargo build --locked --release --package clipdeck-app
       install -Dm755 target/release/clipdeck "$CRAFT_PART_INSTALL/bin/clipdeck"
       install -Dm755 ../../snap/local/clipdeck-launcher "$CRAFT_PART_INSTALL/bin/clipdeck-launcher"

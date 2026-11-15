@@ -4,7 +4,7 @@ From the repository root, with Snapcraft and an initialized LXD build provider:
 
 ```sh
 mkdir -p dist
-snapcraft pack --output dist/clipdeck_2.1.0_amd64.snap
+snapcraft pack --platform amd64 --output dist/clipdeck_2.1.0_amd64.snap
 sudo snap install --dangerous ./dist/clipdeck_2.1.0_amd64.snap
 sudo snap connect clipdeck:password-manager-service
 ```
@@ -12,6 +12,19 @@ sudo snap connect clipdeck:password-manager-service
 The last command grants access to the desktop Secret Service, required for
 encrypted storage. It does not normally auto-connect. A locked or unavailable
 keyring must remain an error; do not bypass it with plaintext storage.
+
+The project declares native `amd64` and `arm64` platforms. For an ARM64 build
+from an x86_64 machine, use Snapcraft's Launchpad builders:
+
+```sh
+snapcraft remote-build --build-for arm64
+```
+
+Use a full Git clone; shallow clones are not supported. Launchpad requires
+Ubuntu One authorization and uploads the build source publicly. The build runs
+the contract oracle and workspace tests natively before packaging. Downloaded
+ARM64 artifacts need package inspection before upload or release. Native ARM
+desktop behavior still requires a graphical ARM64 system to verify.
 
 This is a strictly confined stable-grade candidate. Building it does not publish it.
 The launcher uses `$SNAP_USER_COMMON/profile` for all commands, keeping native
@@ -72,3 +85,11 @@ which may be loaded dynamically; these remain bundled for desktop support.
 The Settings label already uses `CARGO_PKG_VERSION`, as does `--version`.
 An older `/usr/bin/clipdeck` installation reports its own version, independently
 of the Snap installed at `/snap/clipdeck/current/bin/clipdeck`.
+
+The ARM64 2.1.0 package was built on a native Launchpad ARM64 builder with
+Rust 1.89.0. All 244 contract checks and 140 workspace tests passed there
+(the desktop-keyring test remains ignored on the headless builder). Package
+inspection verified all 21 ELF files are AArch64, plus stable/strict metadata,
+the launcher, icon, license and keyboard/locale data. The Store accepted it as
+revision 3 and released it to stable; amd64 remains on revision 2. ARM64 desktop
+interaction has not been verified on physical ARM hardware.
