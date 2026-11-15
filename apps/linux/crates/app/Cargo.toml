@@ -38,7 +38,8 @@ depends = "$auto, libx11-6, libx11-xcb1, libxcb1, libxrandr2, libxi6, libxcursor
 recommends = "gnome-control-center"
 assets = [
     ["target/release/clipdeck", "usr/bin/", "755"],
-    ["assets/clipdeck.desktop", "usr/share/applications/", "644"],
-    ["assets/icon.png", "usr/share/icons/hicolor/256x256/apps/clipdeck.png", "644"],
+    ["assets/io.github.mhosseinab.clipdeck.desktop", "usr/share/applications/", "644"],
+    ["assets/icon.png", "usr/share/icons/hicolor/256x256/apps/io.github.mhosseinab.clipdeck.png", "644"],
+    ["assets/io.github.mhosseinab.clipdeck.metainfo.xml", "usr/share/metainfo/", "644"],
     ["assets/fonts/OFL.txt", "usr/share/doc/clipdeck/OFL-Roboto.txt", "644"],
 ]

@@ -22,6 +22,9 @@ use std::time::Duration;
 use std::sync::mpsc::channel;
 use std::sync::{Arc, RwLock};
 
+pub(crate) const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub(crate) const APP_ID: &str = "io.github.mhosseinab.clipdeck";
+
 const MAX_CONTROL_BYTES: u64 = 32;
 
 fn user_data() -> PathBuf {
@@ -70,6 +73,7 @@ fn main() {
                 }
             }
         }
+        Some("--version") | Some("-V") => println!("ClipDeck {VERSION}"),
         Some("help") | Some("--help") | Some("-h") => print_help(),
         Some(other) => {
             eprintln!("unknown command: {other}");
@@ -80,8 +84,9 @@ fn main() {
 
 fn print_help() {
     println!(
-        "clipdeck — clipboard manager\n\n\
+        "clipdeck {VERSION} — clipboard manager\n\n\
          Usage:\n\
+         \x20 clipdeck --version   print the application version\n\
          \x20 clipdeck [run]        start the daemon + overlay\n\
          \x20 clipdeck toggle      show/hide the overlay\n\
          \x20 clipdeck open        show the overlay\n\

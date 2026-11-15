@@ -48,10 +48,10 @@ original.
 - Behavior changes must update contract, fixtures, reference oracle and Rust
   implementation together.
 - `apps/linux/crates/app/assets/`: `icon.png` (256×256 app icon),
-  `icon_tray.png` (22×22 tray icon), `clipdeck.desktop`, `fonts/`. Icons are
+  `icon_tray.png` (22×22 tray icon), `io.github.mhosseinab.clipdeck.desktop`, `fonts/`. Icons are
   user-generated (never draw replacements). `icon_tray.png` is embedded by `src/tray.rs`, converted from straight RGBA to
   ARGB32 network byte order. `icon.png` is embedded as the window icon. The
-  Wayland app ID is `clipdeck`, matching `clipdeck.desktop`.
+  Wayland app ID is `io.github.mhosseinab.clipdeck`, matching its desktop entry.
 - `dist/` contains ignored local package artifacts, not source.
 
 ## Linux architecture invariants
@@ -74,8 +74,9 @@ original.
 - Wayland window visibility: winit 0.30.13 set_visible is a no-op. Hide must
   drop the presenter before the window; Show recreates both through
   ensure_window on ActiveEventLoop. Start with no window, ignore events for old
-  window IDs, and keep the daemon alive when its overlay closes. Escape closes
-  the whole overlay, including settings/edit/capture modes, and clears hit state.
+  window IDs, and keep the daemon alive when its overlay closes. Escape cancels shortcut recording first, returns from Settings to the clipboard
+  view, and closes the overlay from the clipboard view. The Settings Back button
+  returns without hiding the window or discarding edits. Clear stale hit state.
 - Clipboard: worker thread is the sole owner of arboard. Hotkey thread is the
   sole owner of `GlobalHotKeyManager` (X11 grabs — they cannot fire on GNOME
   Wayland; unsupported for native Wayland apps).

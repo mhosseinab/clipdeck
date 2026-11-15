@@ -144,16 +144,17 @@ impl Fonts {
 
 /// Keyboard symbols use UI strokes because the bundled fonts lack these glyphs.
 pub fn is_key_symbol(ch: char) -> bool {
-    matches!(ch, '←' | '→' | '↵')
+    matches!(ch, '←' | '→' | '↵' | '↪')
 }
 
 fn key_symbol(pm: &mut Pixmap, x: f32, y: f32, px: f32, ch: char, color: [u8;4]) {
     let (tip, tail, wing, center) = if ch == '→' { (0.8,0.2,0.55,0.4) }
+        else if ch == '↪' { (0.8,0.2,0.55,0.6) }
         else if ch == '↵' { (0.2,0.8,0.45,0.6) } else { (0.2,0.8,0.45,0.4) };
     line(pm, x+tip*px, y+center*px, x+tail*px, y+center*px, color);
     line(pm, x+tip*px, y+center*px, x+wing*px, y+(center-0.25)*px, color);
     line(pm, x+tip*px, y+center*px, x+wing*px, y+(center+0.25)*px, color);
-    if ch == '↵' { line(pm, x+tail*px, y+0.05*px, x+tail*px, y+center*px, color); }
+    if ch == '↵' || ch == '↪' { line(pm, x+tail*px, y+0.05*px, x+tail*px, y+center*px, color); }
 }
 
 /* ---------- shapes ---------- */
@@ -383,7 +384,7 @@ mod tests {
     fn keyboard_symbols_have_distinct_shapes_and_fixed_width() {
         let fonts = Fonts::bundled();
         let mut rendered = Vec::new();
-        for ch in ['←', '→', '↵'] {
+        for ch in ['←', '→', '↵', '↪'] {
             assert_eq!(fonts.width(12.0, &ch.to_string(), Face::Medium), 12.0);
             let mut pm = Pixmap::new(24, 24).unwrap();
             fonts.text(&mut pm, 4.0, 18.0, 12.0, &ch.to_string(), Face::Medium, rgba(255,255,255,255));
@@ -392,9 +393,9 @@ mod tests {
             assert!(ink.iter().all(|(x,y)| (4..16).contains(x) && (8..20).contains(y)));
             rendered.push(pm.data().to_vec());
         }
-        assert_ne!(rendered[0],rendered[1]);
-        assert_ne!(rendered[0],rendered[2]);
-        assert_ne!(rendered[1],rendered[2]);
+        for i in 0..rendered.len() {
+            for j in i+1..rendered.len() { assert_ne!(rendered[i],rendered[j]); }
+        }
     }
 
     #[test]

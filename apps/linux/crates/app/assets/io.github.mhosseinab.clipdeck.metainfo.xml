@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright 2026 ClipDeck contributors -->
+<component type="desktop-application">
+  <id>io.github.mhosseinab.clipdeck</id>
+  <name>ClipDeck</name>
+  <summary>Organize and reuse clipboard history</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <developer id="io.github.mhosseinab">
+    <name>mhosseinab</name>
+  </developer>
+  <description>
+    <p>ClipDeck keeps a searchable clipboard history in a compact Linux overlay.
+    Pin useful clips, organize them into named boards, and move clips between
+    boards with drag and drop.</p>
+    <p>Copy text and images back to the clipboard, edit text clips, and queue
+    clips in a paste stack. Watching can be paused from the tray or Settings.</p>
+    <p>On GNOME Wayland, a system keyboard shortcut can open the overlay.
+    Sensitive content is not automatically excluded when clipboard source
+    identity is unavailable. Pause watching when handling private content.</p>
+  </description>
+  <launchable type="desktop-id">io.github.mhosseinab.clipdeck.desktop</launchable>
+  <provides>
+    <binary>clipdeck</binary>
+  </provides>
+  <url type="homepage">https://github.com/mhosseinab/clipdeck</url>
+  <url type="bugtracker">https://github.com/mhosseinab/clipdeck/issues</url>
+  <content_rating type="oars-1.1"/>
+  <supports>
+    <control>keyboard</control>
+    <control>pointing</control>
+  </supports>
+  <releases>
+    <release version="2.0.1" date="2026-11-15"/>
+  </releases>
+</component>

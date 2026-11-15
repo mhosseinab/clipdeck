@@ -39,6 +39,7 @@ enum Hit {
     Pin(usize),
     Edit(usize),
     OpenSettings,
+    CloseSettings,
     OpenKeyboardSettings,
     CopyShortcutCommand,
     CloseWindow,
@@ -412,7 +413,7 @@ fn window_attributes() -> winit::window::WindowAttributes {
     let icon = winit::window::Icon::from_rgba(rgba, width as u32, height as u32)
         .expect("bundled application icon dimensions");
     Window::default_attributes()
-            .with_name("clipdeck", "ClipDeck")
+            .with_name(crate::APP_ID, "ClipDeck")
             .with_window_icon(Some(icon))
             .with_title("ClipDeck")
             .with_window_level(winit::window::WindowLevel::AlwaysOnTop)
@@ -515,6 +516,7 @@ impl Ui {
             self.handle_key_action(KeyAction::Close);
             return;
         }
+        if self.settings && !self.capture { return; }
         if self.dialog.is_some() {
             self.handle_key_action(route_key(&ev.logical_key, ctrl, shift));
             return;
@@ -575,13 +577,31 @@ impl Ui {
         self.handle_key_action(action);
     }
 
+    fn close_settings(&mut self) {
+        self.settings = false;
+        self.capture = false;
+        self.settings_notice = None;
+        self.hits.clear();
+        self.request_redraw();
+    }
+
     fn handle_key_action(&mut self, action: KeyAction) {
+        if self.settings && action != KeyAction::Close { return; }
         if self.dialog.is_some() && action != KeyAction::Close {
             self.handle_dialog_key(action);
             return;
         }
         match action {
-            KeyAction::Close => self.apply(AppEvent::Hide),
+            KeyAction::Close => {
+                if self.settings && self.capture {
+                    self.capture = false;
+                    self.request_redraw();
+                } else if self.settings {
+                    self.close_settings();
+                } else {
+                    self.apply(AppEvent::Hide);
+                }
+            },
             KeyAction::Next => {
                 self.selected = (self.selected + 1).min(self.items.len().saturating_sub(1));
                 self.scroll_selected_into_view();
@@ -754,6 +774,7 @@ impl Ui {
             }
             Hit::OpenKeyboardSettings => self.apply(AppEvent::OpenKeyboardSettings),
             Hit::CopyShortcutCommand => self.apply(AppEvent::CopyShortcutCommand),
+            Hit::CloseSettings => self.close_settings(),
             Hit::OpenSettings => {
                 self.settings = true;
                 self.request_redraw();
@@ -1273,8 +1294,8 @@ impl Ui {
             stroke_round(pm, x, y, w, h, 15.0, rgba(143, 176, 255, 230), 1.5);
         }
         self.hit(x, y, w, h, Hit::Select(idx));
-        f.text_l(pm, x + 14.0, y + 13.0, 10.0, "Move to…", Face::Regular, rgba(143, 176, 255, 220));
-        self.hit(x + 8.0, y + 2.0, 76.0, 22.0, Hit::MoveToBoard(idx));
+        f.text_l(pm, x + 14.0, y + 13.0, 12.0, "↪", Face::Medium, rgba(143, 176, 255, 235));
+        self.hit(x + 8.0, y + 2.0, 36.0, 22.0, Hit::MoveToBoard(idx));
         icon_pin(pm, x + w - 61.0, y + 13.0, item.pinned);
         self.hit(x + w - 72.0, y + 2.0, 22.0, 22.0, Hit::Pin(idx));
         icon_edit(pm, x + w - 37.0, y + 13.0, rgba(238, 240, 246, 190));
@@ -1434,7 +1455,11 @@ impl Ui {
         let left = 210.0;
         let right = (w - 470.0).max(left + 330.0);
         let width = right - left - 24.0;
-        f.text_l(pm, left, 30.0, 15.0, "Settings", Face::Medium, rgba(238, 240, 246, 245));
+        round_rect(pm, left, 16.0, 64.0, 28.0, 8.0, rgba(255,255,255,20));
+        f.text_c(pm, left + 32.0, 30.0, 12.0, "← Back", Face::Regular, rgba(238,240,246,240));
+        self.hit(left, 16.0, 64.0, 28.0, Hit::CloseSettings);
+        f.text_l(pm, left + 82.0, 30.0, 15.0, "Settings", Face::Medium, rgba(238, 240, 246, 245));
+        f.text_l(pm, left + 176.0, 30.0, 12.0, &format!("v{}", crate::VERSION), Face::Regular, rgba(238, 240, 246, 170));
         round_rect(pm, left, 52.0, width, 96.0, 12.0, rgba(28, 31, 45, 255));
         f.text_l(pm, left + 18.0, 72.0, 13.0, "General", Face::Medium, rgba(245, 247, 252, 255));
         self.draw_setting_row(pm, left + 18.0, 82.0, width - 36.0, "Watch clipboard", s.watch_enabled, "watch");
@@ -2061,7 +2086,7 @@ mod tests {
     }
 
     #[test]
-    fn escape_closes_settings_and_clears_interaction_state() {
+    fn escape_leaves_settings_before_closing_the_overlay() {
         let mut ui = fixture_ui();
         ui.visible = true;
         ui.settings = true;
@@ -2069,8 +2094,36 @@ mod tests {
         ui.editing = Some(("qa".into(), "draft".into()));
         ui.hits.push((0.0, 0.0, 20.0, 20.0, Hit::CloseWindow));
         ui.handle_key_action(KeyAction::Close);
-        assert!(!ui.visible, "Escape only switched settings to history");
-        assert!(!ui.settings && !ui.capture && ui.editing.is_none());
+        assert!(ui.visible && ui.settings && !ui.capture, "Escape should cancel shortcut recording first");
+        ui.handle_key_action(KeyAction::Close);
+        assert!(ui.visible && !ui.settings, "Escape should return to the clipboard");
+        assert_eq!(ui.editing.as_ref().map(|(_,draft)| draft.as_str()),Some("draft"));
+        assert!(ui.hits.is_empty());
+        ui.handle_key_action(KeyAction::Close);
+        assert!(!ui.visible && ui.editing.is_none());
+    }
+
+    #[test]
+    fn settings_do_not_route_keys_to_the_hidden_clipboard_view() {
+        let (mut ui, worker) = fixture_ui_with_worker();
+        ui.visible = true;
+        ui.settings = true;
+        ui.handle_key_action(KeyAction::QueryPush("hidden search".into()));
+        assert!(ui.query.is_empty());
+        assert!(worker.try_recv().is_err());
+    }
+
+    #[test]
+    fn settings_back_button_returns_without_hiding_or_discarding_edits() {
+        let mut ui = fixture_ui();
+        ui.visible = true;
+        ui.settings = true;
+        ui.editing = Some(("qa".into(),"draft".into()));
+        ui.render_frame(W as u32,H as u32);
+        ui.mouse = Some((242.0,30.0));
+        ui.click();
+        assert!(ui.visible && !ui.settings);
+        assert!(ui.editing.is_some());
         assert!(ui.hits.is_empty());
     }
 

@@ -9,7 +9,7 @@ For Ubuntu 24.04 or newer on x86_64, download the Debian package from
 [GitHub Releases](https://github.com/mhosseinab/clipdeck/releases/latest).
 
 ```bash
-sudo apt install ./clipdeck_2.0.0-1_amd64.deb
+sudo apt install ./clipdeck_2.0.1-1_amd64.deb
 clipdeck
 ```
 
@@ -42,9 +42,10 @@ bash scripts/check.sh linux
 
 ## Packaging
 
-Requires `cargo-deb` 3.8.0, `dpkg-deb`, `desktop-file-validate`, `tar` and
+Requires `cargo-deb` 3.8.0, `dpkg-deb`, `desktop-file-validate`, `appstreamcli`, `tar` and
 `sha256sum` in addition to the build tools. On Ubuntu, the desktop validator is
-provided by `desktop-file-utils`. Install tooling separately if missing.
+provided by `desktop-file-utils`, and `appstreamcli` by `appstream`.
+Install tooling separately if missing.
 
 ```bash
 bash scripts/package.sh
@@ -65,6 +66,7 @@ it is an extracted prefix layout, not an AppImage or self-contained runtime.
 - Tray menu: open, settings, pause watching, recent items, quit
 - Runs at login (autostart entry, toggle in Settings)
 - CLI: `clipdeck toggle|open|settings|quit|export|import`
+- Version: shown in Settings and printed by `clipdeck --version`
 
 Use each card's pin control to pin or unpin it. The bottom hint bar groups
 shortcuts in brighter keycaps.
@@ -72,12 +74,13 @@ shortcuts in brighter keycaps.
 Linux overlay controls: **Enter** or **double-click a card** copies it to the
 clipboard and closes the overlay; **Shift+Enter** copies plain text.
 Paste into the destination app yourself. ClipDeck does not simulate keyboard or
-mouse input. **Escape** and the top-right **×** close the overlay while the
-daemon stays running. The **×** beside a pinboard deletes that board and keeps
-its clips in History.
+mouse input. **Escape** or **Back** returns from Settings to the clipboard view.
+In the clipboard view, **Escape** and the top-right **×** close the overlay while
+the daemon stays running. The **×** beside a pinboard deletes that board and
+keeps its clips in History.
 
 Use the **pencil beside a board** to rename it, then press Enter or Save. Use
-**Move to…** on a clip card to choose its board. Choose **No board (History)**
+the **↪** arrow on a clip card to choose its board. Choose **No board (History)**
 to remove its board membership. The picker scrolls when there are more boards
 than fit on screen; moving preserves the clip's pin and paste-stack state.
 

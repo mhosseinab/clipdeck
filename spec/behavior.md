@@ -311,7 +311,7 @@ The overlay presents: search field, sidebar (History / Pinned / pinboards),
 horizontal card strip with per-type previews, paste-stack panel, hints row,
 settings window. Linux keyboard: `←/→` select, `Enter` or double-click copy and
 close, `Shift+Enter` copy plain and close, `Ctrl+E` edit, `Ctrl+C` copy without
-closing, `Ctrl+S` stack, `Del` remove with confirmation, `Esc` close. Cards drag
+closing, `Ctrl+S` stack, `Del` remove with confirmation, `Esc` returns from Settings or closes the clipboard overlay. Cards drag
 to sidebar boards. Removing from a board preserves History unless the user
 opts into deleting from History. Each card has a pin/unpin control. No synthetic
 input is used. External drag-out and manual card reordering are not implemented.
