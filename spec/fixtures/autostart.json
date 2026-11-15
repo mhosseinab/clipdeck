@@ -1,0 +1,58 @@
+{
+  "fixture": "autostart",
+  "specRef": "spec/behavior.md#11-launch-at-login",
+  "description": "Byte-exact Linux autostart entries and platform delegation. Desktop-entry content ends with a trailing newline.",
+  "linuxPathTemplate": "~/.config/autostart/clipdeck.desktop",
+  "cases": [
+    {
+      "id": "linux-packaged-enable",
+      "platform": "linux",
+      "enable": true,
+      "isPackaged": true,
+      "execPath": "/opt/ClipDeck/clipdeck",
+      "expectedFile": {
+        "content": "[Desktop Entry]\nType=Application\nName=ClipDeck\nComment=Clipboard manager\nExec=\"/opt/ClipDeck/clipdeck\"\nX-GNOME-Autostart-enabled=true\nHidden=false\nNoDisplay=false\n"
+      }
+    },
+    {
+      "id": "linux-appimage-enable",
+      "platform": "linux",
+      "enable": true,
+      "isPackaged": true,
+      "execPath": "/tmp/.mount_ClipDe/clipdeck",
+      "appImage": "/home/user/Downloads/ClipDeck-2.0.0.AppImage",
+      "expectedFile": {
+        "content": "[Desktop Entry]\nType=Application\nName=ClipDeck\nComment=Clipboard manager\nExec=\"/home/user/Downloads/ClipDeck-2.0.0.AppImage\"\nX-GNOME-Autostart-enabled=true\nHidden=false\nNoDisplay=false\n"
+      }
+    },
+    {
+      "id": "linux-disable",
+      "platform": "linux",
+      "enable": false,
+      "isPackaged": true,
+      "execPath": "/opt/ClipDeck/clipdeck",
+      "expectedFile": null
+    },
+    {
+      "id": "macos-delegation-enable",
+      "platform": "darwin",
+      "enable": true,
+      "isPackaged": true,
+      "execPath": "/Applications/ClipDeck.app/Contents/MacOS/clipdeck",
+      "expectedLoginItemSettings": true
+    },
+    {
+      "id": "macos-delegation-disable",
+      "platform": "darwin",
+      "enable": false,
+      "isPackaged": true,
+      "execPath": "/Applications/ClipDeck.app/Contents/MacOS/clipdeck",
+      "expectedLoginItemSettings": false
+    }
+  ],
+  "notes": [
+    "AppImage installs record the AppImage path, not the extracted binary (it disappears on exit).",
+    "The native binary needs no arguments, so Exec never carries an app path (v2 deviation from the Electron build).",
+    "macOS and Windows delegate to the OS login-item API; the fixture records the boolean passed."
+  ]
+}

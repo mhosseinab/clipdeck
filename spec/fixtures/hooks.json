@@ -1,0 +1,39 @@
+{
+  "fixture": "hooks",
+  "specRef": "spec/behavior.md#8-scripting-hooks",
+  "description": "Hook line parsing (UI form 'event=command') and execution semantics.",
+  "parsing": [
+    { "id": "copy-simple", "line": "copy=notify-send hi", "expected": { "event": "copy", "command": "notify-send hi" } },
+    { "id": "paste-simple", "line": "paste=xclip -o", "expected": { "event": "paste", "command": "xclip -o" } },
+    {
+      "id": "equals-inside-command",
+      "line": "copy=echo a=b",
+      "expected": { "event": "copy", "command": "echo a=b" },
+      "note": "split at the FIRST '=' only"
+    },
+    {
+      "id": "trims-both-sides",
+      "line": "  copy  =  ls -la  ",
+      "expected": { "event": "copy", "command": "ls -la" }
+    },
+    { "id": "unicode-command", "line": "copy=echo \u4f60\u597d", "expected": { "event": "copy", "command": "echo \u4f60\u597d" } },
+    { "id": "empty-command", "line": "copy=", "expected": null },
+    { "id": "blank-command", "line": "copy=   ", "expected": null },
+    { "id": "no-equals", "line": "copy-notify-send", "expected": null },
+    { "id": "empty-event", "line": "=cmd", "expected": null },
+    { "id": "unknown-event", "line": "delete=cmd", "expected": null },
+    { "id": "empty-line", "line": "", "expected": null }
+  ],
+  "execution": {
+    "shell": "/bin/sh",
+    "argv": ["-c", "<command>"],
+    "stdin": "item content bytes (UTF-8), then EOF",
+    "timeoutMs": 5000,
+    "concurrency": "all matching hooks run concurrently; each command is its own process",
+    "failureMode": "silent; never affects the application",
+    "events": {
+      "copy": "fires on capture (including dedupe refresh) and on explicit copy",
+      "paste": "fires on pasteItem and on stack pop"
+    }
+  }
+}

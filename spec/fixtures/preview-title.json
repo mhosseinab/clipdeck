@@ -1,0 +1,187 @@
+{
+  "fixture": "preview-title",
+  "specRef": "spec/behavior.md#4-preview-and-title-derivation",
+  "description": "Preview/title derivation. Truncation counts Unicode scalar values and appends U+2026 when truncation occurs. 'dims' supplies decoded image dimensions for image cases.",
+  "ellipsis": "\u2026",
+  "truncateBy": "unicode-scalar",
+  "titleCap": 60,
+  "previewCap": 120,
+  "linkFallbackCap": 80,
+  "cases": [
+    {
+      "id": "text-multiline-first-line",
+      "type": "text",
+      "content": "first line here\nsecond line",
+      "expected": {
+        "title": "first line here",
+        "preview": "first line here"
+      }
+    },
+    {
+      "id": "text-leading-spaces-trimmed",
+      "type": "text",
+      "content": "   spaced line",
+      "expected": {
+        "title": "spaced line",
+        "preview": "spaced line"
+      }
+    },
+    {
+      "id": "text-crlf-first-line",
+      "type": "text",
+      "content": "a\r\nb",
+      "expected": {
+        "title": "a",
+        "preview": "a"
+      },
+      "note": "first line 'a\\r' is trimmed to 'a'"
+    },
+    {
+      "id": "text-empty-first-line",
+      "type": "text",
+      "content": "\nsecond line",
+      "expected": {
+        "title": "text",
+        "preview": ""
+      },
+      "note": "empty first line: title falls back to the type name; preview stays empty"
+    },
+    {
+      "id": "text-long-ascii-truncated",
+      "type": "text",
+      "content": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expected": {
+        "title": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\u2026",
+        "preview": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\u2026"
+      },
+      "note": "200 scalars: title = 60 + ellipsis, preview = 120 + ellipsis"
+    },
+    {
+      "id": "text-exactly-60-scalars-no-ellipsis",
+      "type": "text",
+      "content": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expected": {
+        "title": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "preview": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "note": "exactly at the title cap: no ellipsis"
+    },
+    {
+      "id": "text-61-scalars-title-ellipsis-only",
+      "type": "text",
+      "content": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expected": {
+        "title": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\u2026",
+        "preview": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "note": "61 scalars: title truncates at 60 + ellipsis, preview is complete (61 < 120)"
+    },
+    {
+      "id": "text-emoji-scalar-counting",
+      "type": "text",
+      "content": "\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89",
+      "expected": {
+        "title": "\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\u2026",
+        "preview": "\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89\ud83c\udf89"
+      },
+      "note": "70 emoji scalars: title = 60 + ellipsis; preview complete (70 < 120)"
+    },
+    {
+      "id": "link-hostname",
+      "type": "link",
+      "content": "https://www.example.com/x/y",
+      "expected": {
+        "title": "example.com",
+        "preview": "example.com"
+      }
+    },
+    {
+      "id": "link-subdomain",
+      "type": "link",
+      "content": "https://sub.example.co.uk",
+      "expected": {
+        "title": "sub.example.co.uk",
+        "preview": "sub.example.co.uk"
+      }
+    },
+    {
+      "id": "link-unparseable-fallback",
+      "type": "link",
+      "content": "https://",
+      "expected": {
+        "title": "https://",
+        "preview": "https://"
+      },
+      "note": "URL parse failure: content truncated to 80 scalars (7 here, so unchanged)"
+    },
+    {
+      "id": "link-fallback-truncation",
+      "type": "link",
+      "content": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcde",
+      "expected": {
+        "title": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghij\u2026",
+        "preview": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghij\u2026"
+      },
+      "note": "85 scalars, unparseable as URL: 80-scalar fallback + ellipsis"
+    },
+    {
+      "id": "color-verbatim",
+      "type": "color",
+      "content": "#a1b2c3",
+      "expected": {
+        "title": "#a1b2c3",
+        "preview": "#a1b2c3"
+      }
+    },
+    {
+      "id": "color-trimmed-keeps-case",
+      "type": "color",
+      "content": "  #AABBCC  ",
+      "expected": {
+        "title": "#AABBCC",
+        "preview": "#AABBCC"
+      }
+    },
+    {
+      "id": "file-single",
+      "type": "file",
+      "content": "/home/user/Documents/notes.md",
+      "expected": {
+        "title": "notes.md",
+        "preview": "notes.md"
+      }
+    },
+    {
+      "id": "file-multiple",
+      "type": "file",
+      "content": "/home/user/a.txt\n/home/user/b.txt",
+      "expected": {
+        "title": "2 files",
+        "preview": "2 files"
+      }
+    },
+    {
+      "id": "image-dims",
+      "type": "image",
+      "content": "deadbeef.png",
+      "dims": {
+        "width": 512,
+        "height": 256
+      },
+      "expected": {
+        "title": "Image",
+        "preview": "512\u00d7256 image"
+      }
+    },
+    {
+      "id": "html-first-line",
+      "type": "html",
+      "content": "hello world\nsecond line",
+      "expected": {
+        "title": "hello world",
+        "preview": "hello world"
+      },
+      "note": "html items derive title/preview from stored body text like any non-special type"
+    }
+  ]
+}

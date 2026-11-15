@@ -1,0 +1,154 @@
+{
+  "fixture": "store-rules",
+  "specRef": "spec/behavior.md#5-store-format",
+  "description": "Dedupe, trim, and reorder semantics. 'adds' are sequential captures in order (item n is newest); expected 'contents' is the final list order (index 0 = front).",
+  "dedupeKey": "type + \"|\" + content",
+  "cases": [
+    {
+      "id": "dedupe-moves-to-front",
+      "maxItems": 100,
+      "adds": [
+        { "content": "a", "type": "text" },
+        { "content": "b", "type": "text" },
+        { "content": "a", "type": "text" }
+      ],
+      "expected": { "contents": ["a", "b"], "count": 2 },
+      "note": "third add is a duplicate of the first: refresh metadata and move to front"
+    },
+    {
+      "id": "dedupe-different-type-not-duplicate",
+      "maxItems": 100,
+      "adds": [
+        { "content": "x", "type": "text" },
+        { "content": "x", "type": "code" }
+      ],
+      "expected": { "contents": ["x", "x"], "count": 2 },
+      "note": "key includes type"
+    },
+    {
+      "id": "dedupe-skips-stack-items",
+      "maxItems": 100,
+      "adds": [
+        { "content": "x", "type": "text", "stackOrder": 1 },
+        { "content": "x", "type": "text" }
+      ],
+      "expected": { "contents": ["x", "x"], "count": 2, "stackedCount": 1 },
+      "note": "items with stackOrder != null are never dedupe candidates"
+    },
+    {
+      "id": "trim-basic-unpinned",
+      "maxItems": 2,
+      "adds": [
+        { "content": "a", "type": "text" },
+        { "content": "b", "type": "text" },
+        { "content": "c", "type": "text" }
+      ],
+      "expected": { "contents": ["c", "b"], "count": 2 },
+      "note": "oldest unpinned dropped"
+    },
+    {
+      "id": "trim-pinned-survive-over-cap",
+      "maxItems": 1,
+      "adds": [
+        { "content": "p1", "type": "text", "pinned": true },
+        { "content": "p2", "type": "text", "pinned": true },
+        { "content": "u1", "type": "text" }
+      ],
+      "expected": { "contents": ["p2", "p1"], "count": 2 },
+      "note": "keep set wins even beyond maxItems; newest unpinned is dropped"
+    },
+    {
+      "id": "trim-pinboard-survives",
+      "maxItems": 1,
+      "adds": [
+        { "content": "b1", "type": "text", "pinboardId": "pb-1" },
+        { "content": "u1", "type": "text" }
+      ],
+      "expected": { "contents": ["b1"], "count": 1 }
+    },
+    {
+      "id": "trim-stack-survives",
+      "maxItems": 1,
+      "adds": [
+        { "content": "s1", "type": "text", "stackOrder": 1 },
+        { "content": "u1", "type": "text" }
+      ],
+      "expected": { "contents": ["s1"], "count": 1 }
+    },
+    {
+      "id": "trim-all-keep-none-overflow",
+      "maxItems": 2,
+      "adds": [
+        { "content": "p1", "type": "text", "pinned": true },
+        { "content": "p2", "type": "text", "pinned": true },
+        { "content": "p3", "type": "text", "pinned": true }
+      ],
+      "expected": { "contents": ["p3", "p2", "p1"], "count": 3 }
+    },
+    {
+      "id": "trim-max-zero",
+      "maxItems": 0,
+      "adds": [
+        { "content": "a", "type": "text" },
+        { "content": "b", "type": "text" }
+      ],
+      "expected": { "contents": [], "count": 0 }
+    },
+    {
+      "id": "trim-max-zero-keeps-keep-set",
+      "maxItems": 0,
+      "adds": [
+        { "content": "a", "type": "text" },
+        { "content": "p", "type": "text", "pinned": true }
+      ],
+      "expected": { "contents": ["p"], "count": 1 }
+    },
+    {
+      "id": "reorder-whole-list",
+      "maxItems": 100,
+      "adds": [
+        { "content": "a", "type": "text" },
+        { "content": "b", "type": "text" },
+        { "content": "c", "type": "text" }
+      ],
+      "reorder": ["c", "a", "b"],
+      "expected": { "contents": ["c", "a", "b"], "count": 3 },
+      "note": "after adds the list is [c,b,a]; reorder receives full id order"
+    }
+  ],
+  "importCases": [
+    {
+      "id": "import-roundtrip-then-dedupe",
+      "local": [{ "content": "alpha", "type": "text" }],
+      "import": [
+        { "id": "i1", "content": "alpha", "type": "text" },
+        { "id": "i2", "content": "beta", "type": "text" }
+      ],
+      "expected": { "imported": 1, "skipped": 1, "count": 2 },
+      "note": "alpha skipped by content key"
+    },
+    {
+      "id": "import-id-collision-skipped",
+      "local": [{ "id": "same-id", "content": "one", "type": "text" }],
+      "import": [{ "id": "same-id", "content": "two", "type": "text" }],
+      "expected": { "imported": 0, "skipped": 1, "count": 1 },
+      "note": "v2 tightening: id collision skips regardless of content"
+    },
+    {
+      "id": "import-malformed-counted",
+      "local": [],
+      "import": [
+        null,
+        { "content": 5 },
+        { "id": "ok", "content": "fine", "type": "text" }
+      ],
+      "expected": { "imported": 1, "skipped": 2, "count": 1 }
+    },
+    {
+      "id": "import-resets-stack",
+      "local": [],
+      "import": [{ "id": "s1", "content": "queued", "type": "text", "stackOrder": 3 }],
+      "expected": { "imported": 1, "skipped": 0, "count": 1, "stackedCount": 0 }
+    }
+  ]
+}

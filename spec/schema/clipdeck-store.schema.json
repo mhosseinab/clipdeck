@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "clipdeck-store.schema.json",
+  "title": "ClipDeck store file (clipdeck-store.json)",
+  "type": "object",
+  "required": ["items", "pinboards", "settings"],
+  "additionalProperties": true,
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/clipItem" }
+    },
+    "pinboards": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/pinboard" }
+    },
+    "settings": { "$ref": "#/$defs/settings" }
+  },
+  "$defs": {
+    "clipItem": {
+      "type": "object",
+      "required": [
+        "id", "type", "content", "preview", "title",
+        "createdAt", "sizeBytes", "pinned", "pinboardId", "stackOrder"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "type": {
+          "enum": ["text", "link", "code", "color", "image", "file", "html"]
+        },
+        "content": { "type": "string" },
+        "preview": { "type": "string" },
+        "title": { "type": "string" },
+        "sourceApp": { "type": ["string", "null"] },
+        "createdAt": { "type": "integer", "minimum": 0 },
+        "sizeBytes": { "type": "integer", "minimum": 0 },
+        "pinned": { "type": "boolean" },
+        "pinboardId": { "type": ["string", "null"] },
+        "stackOrder": { "type": ["integer", "null"], "minimum": 1 },
+        "imageFile": { "type": "string" }
+      }
+    },
+    "pinboard": {
+      "type": "object",
+      "required": ["id", "name", "icon", "position"],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string" },
+        "icon": { "type": "string" },
+        "position": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "settings": {
+      "type": "object",
+      "required": [
+        "watchEnabled", "soundCopy", "soundPaste", "maxItems", "shortcut",
+        "launchAtLogin", "theme", "excludedApps", "ignoreTransient",
+        "ignoreConfidential", "generateLinkPreviews", "pasteAsPlainText",
+        "stackDirection", "plainTextApps", "syncDirectory",
+        "showInScreenShare", "hooks"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "watchEnabled": { "type": "boolean" },
+        "soundCopy": { "type": "boolean" },
+        "soundPaste": { "type": "boolean" },
+        "maxItems": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+        "shortcut": { "type": "string", "minLength": 1 },
+        "launchAtLogin": { "type": "boolean" },
+        "theme": { "enum": ["dark", "light"] },
+        "excludedApps": { "type": "array", "items": { "type": "string" } },
+        "ignoreTransient": { "type": "boolean" },
+        "ignoreConfidential": { "type": "boolean" },
+        "generateLinkPreviews": { "type": "boolean" },
+        "pasteAsPlainText": { "type": "boolean" },
+        "stackDirection": { "enum": ["fifo", "lifo"] },
+        "plainTextApps": { "type": "array", "items": { "type": "string" } },
+        "syncDirectory": { "type": "string" },
+        "showInScreenShare": { "type": "boolean" },
+        "hooks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["event", "command"],
+            "properties": {
+              "event": { "enum": ["copy", "paste"] },
+              "command": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    }
+  }
+}

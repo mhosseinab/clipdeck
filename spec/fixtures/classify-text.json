@@ -1,0 +1,217 @@
+{
+  "fixture": "classify-text",
+  "specRef": "spec/behavior.md#3-text-classification",
+  "description": "Text classification vectors. 'raw' is the input as captured; classification follows the exact algorithm in behavior.md \u00a73, including the quirk that the indentation signal tests raw text while other signals test trimmed text.",
+  "cases": [
+    {
+      "id": "color-hex3",
+      "raw": "#abc",
+      "expected": "color"
+    },
+    {
+      "id": "color-hex4",
+      "raw": "#abcd",
+      "expected": "color"
+    },
+    {
+      "id": "color-hex6",
+      "raw": "#a1b2c3",
+      "expected": "color"
+    },
+    {
+      "id": "color-hex8",
+      "raw": "#a1b2c3d4",
+      "expected": "color"
+    },
+    {
+      "id": "color-hex-upper",
+      "raw": "#A1B2C3",
+      "expected": "color"
+    },
+    {
+      "id": "color-hex-padded",
+      "raw": "  #abc  ",
+      "expected": "color"
+    },
+    {
+      "id": "color-hex2-invalid",
+      "raw": "#ab",
+      "expected": "text"
+    },
+    {
+      "id": "color-hex9-invalid",
+      "raw": "#a1b2c3d4e5",
+      "expected": "text"
+    },
+    {
+      "id": "color-hex-nonhex",
+      "raw": "#abcdefg",
+      "expected": "text"
+    },
+    {
+      "id": "color-hex-in-sentence",
+      "raw": "#abc is my favorite color",
+      "expected": "text"
+    },
+    {
+      "id": "color-rgb",
+      "raw": "rgb(1,2,3)",
+      "expected": "color"
+    },
+    {
+      "id": "color-rgba",
+      "raw": "rgba(1, 2, 3, 0.5)",
+      "expected": "color"
+    },
+    {
+      "id": "color-rgb-case-sensitive",
+      "raw": "RGB(1,2,3)",
+      "expected": "text",
+      "note": "regex is case-sensitive; parens give code-score 1, still 'text'"
+    },
+    {
+      "id": "link-https",
+      "raw": "https://example.com",
+      "expected": "link"
+    },
+    {
+      "id": "link-https-path",
+      "raw": "https://example.com/a/b?q=1&x=2",
+      "expected": "link"
+    },
+    {
+      "id": "link-http",
+      "raw": "http://example.com",
+      "expected": "link"
+    },
+    {
+      "id": "link-www",
+      "raw": "www.example.com",
+      "expected": "link"
+    },
+    {
+      "id": "link-padded",
+      "raw": "  https://example.com  ",
+      "expected": "link"
+    },
+    {
+      "id": "link-bare-scheme",
+      "raw": "https://",
+      "expected": "text",
+      "note": "\\\\S+ requires at least one character after the scheme"
+    },
+    {
+      "id": "link-ftp",
+      "raw": "ftp://example.com",
+      "expected": "text"
+    },
+    {
+      "id": "link-with-trailing-text",
+      "raw": "https://example.com and then words",
+      "expected": "text"
+    },
+    {
+      "id": "code-const",
+      "raw": "const x = 1;",
+      "expected": "code",
+      "note": "keyword + punctuation = 2"
+    },
+    {
+      "id": "code-def-indented",
+      "raw": "def foo():\n    return 1",
+      "expected": "code",
+      "note": "def keyword + indent signal"
+    },
+    {
+      "id": "code-braced-multiline",
+      "raw": "if (x) {\n    y();\n}",
+      "expected": "code",
+      "note": "punctuation + indent signal"
+    },
+    {
+      "id": "code-tag",
+      "raw": "<div>hello</div>",
+      "expected": "text",
+      "note": "'</' is a keyword-signal but '<' ']' '>' are not punctuation-signal chars: score 1 = text"
+    },
+    {
+      "id": "code-include",
+      "raw": "#include <stdio.h>",
+      "expected": "text",
+      "note": "'#include' is a keyword-signal; without ';' or braces there is no second signal: score 1 = text"
+    },
+    {
+      "id": "text-semicolons-only",
+      "raw": "a; b; c;",
+      "expected": "text",
+      "note": "one punctuation signal only"
+    },
+    {
+      "id": "text-braces-only",
+      "raw": "{hello}",
+      "expected": "text",
+      "note": "one punctuation signal only"
+    },
+    {
+      "id": "text-if-return",
+      "raw": "if (x) return;",
+      "expected": "text",
+      "note": "v1 quirk preserved: 'if'/'return' are not keyword-signal words, and all punctuation shares one signal"
+    },
+    {
+      "id": "text-json-oneline",
+      "raw": "{\"a\": 1}",
+      "expected": "text"
+    },
+    {
+      "id": "text-multiline-no-indent",
+      "raw": "line one\nline two",
+      "expected": "text"
+    },
+    {
+      "id": "text-multiline-one-space-indent",
+      "raw": "line one\n line two",
+      "expected": "text",
+      "note": "indent regex needs 2+ spaces or a tab"
+    },
+    {
+      "id": "text-multiline-tab-only",
+      "raw": "line one\n\tline two",
+      "expected": "text",
+      "note": "tab gives the indent signal but nothing else: score 1"
+    },
+    {
+      "id": "text-plain",
+      "raw": "hello world",
+      "expected": "text"
+    },
+    {
+      "id": "text-unicode",
+      "raw": "\u4f60\u597d\u4e16\u754c\uff0c\u8fd9\u662f\u4e00\u4e2a\u666e\u901a\u7684\u53e5\u5b50\u3002",
+      "expected": "text"
+    },
+    {
+      "id": "text-emoji",
+      "raw": "\ud83c\udf89 party time \ud83c\udf88",
+      "expected": "text"
+    },
+    {
+      "id": "text-empty-trimmed",
+      "raw": "   ",
+      "expected": "text",
+      "note": "classifier alone: empty trimmed text scores 0; capture pipeline never stores it"
+    },
+    {
+      "id": "text-lonely-import-word",
+      "raw": "an import statement was made",
+      "expected": "text",
+      "note": "'import ' matches keyword signal but no second signal"
+    },
+    {
+      "id": "code-import-stmt",
+      "raw": "import os; import sys;",
+      "expected": "code",
+      "note": "keyword + punctuation = 2"
+    }
+  ]
+}

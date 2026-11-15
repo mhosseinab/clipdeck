@@ -1,0 +1,88 @@
+{
+  "fixture": "accelerators",
+  "specRef": "spec/behavior.md#10-global-shortcut",
+  "description": "Key-recording grammar and canonical ordering. 'events' describe physical presses: ctrl/meta/alt/shift booleans plus the physical key code.",
+  "canonicalOrder": ["CommandOrControl", "Command", "Control", "Alt", "Shift"],
+  "recording": [
+    {
+      "id": "ctrl-shift-v",
+      "event": { "ctrl": true, "meta": false, "alt": false, "shift": true, "code": "KeyV" },
+      "expected": "CommandOrControl+Shift+V"
+    },
+    {
+      "id": "meta-c-mac",
+      "event": { "ctrl": false, "meta": true, "alt": false, "shift": false, "code": "KeyC" },
+      "expected": "CommandOrControl+C",
+      "note": "Cmd normalizes to CommandOrControl (cross-platform default)"
+    },
+    {
+      "id": "ctrl-alt-k",
+      "event": { "ctrl": true, "meta": false, "alt": true, "shift": false, "code": "KeyK" },
+      "expected": "CommandOrControl+Alt+K"
+    },
+    {
+      "id": "full-modifier-stack",
+      "event": { "ctrl": true, "meta": false, "alt": true, "shift": true, "code": "KeyZ" },
+      "expected": "CommandOrControl+Alt+Shift+Z"
+    },
+    {
+      "id": "alt-shift-arrow",
+      "event": { "ctrl": false, "meta": false, "alt": true, "shift": true, "code": "ArrowLeft" },
+      "expected": "Alt+Shift+Left"
+    },
+    {
+      "id": "bare-f5",
+      "event": { "ctrl": false, "meta": false, "alt": false, "shift": false, "code": "F5" },
+      "expected": "F5"
+    },
+    {
+      "id": "ctrl-shift-digit",
+      "event": { "ctrl": true, "meta": false, "alt": false, "shift": true, "code": "Digit1" },
+      "expected": "CommandOrControl+Shift+1"
+    },
+    {
+      "id": "ctrl-space",
+      "event": { "ctrl": true, "meta": false, "alt": false, "shift": false, "code": "Space" },
+      "expected": "CommandOrControl+Space"
+    },
+    {
+      "id": "ctrl-bracket-left",
+      "event": { "ctrl": true, "meta": false, "alt": false, "shift": false, "code": "BracketLeft" },
+      "expected": "CommandOrControl+BracketLeft"
+    },
+    {
+      "id": "modifiers-only",
+      "event": { "ctrl": true, "meta": false, "alt": false, "shift": true, "code": "" },
+      "expected": null,
+      "note": "modifier-only press records nothing"
+    },
+    {
+      "id": "unsupported-key-code",
+      "event": { "ctrl": true, "meta": false, "alt": false, "shift": false, "code": "IntlBackslash" },
+      "expected": null
+    },
+    {
+      "id": "f25-out-of-range",
+      "event": { "ctrl": false, "meta": false, "alt": false, "shift": false, "code": "F25" },
+      "expected": null
+    },
+    {
+      "id": "escape-cancels-recording",
+      "event": { "ctrl": false, "meta": false, "alt": false, "shift": false, "code": "Escape" },
+      "expected": null,
+      "note": "recorder semantics: Escape cancels rather than producing 'Escape'"
+    }
+  ],
+  "display": [
+    { "accel": "CommandOrControl+Shift+V", "pretty": "\u2318/Ctrl+\u21e7+V" },
+    { "accel": "CommandOrControl+Alt+K", "pretty": "\u2318/Ctrl+\u2325+K" },
+    { "accel": "Alt+Shift+Left", "pretty": "\u2325+\u21e7+Left" },
+    { "accel": "Command+Q", "pretty": "\u2318+Q" },
+    { "accel": "Control+Alt+Delete", "pretty": "Ctrl+\u2325+Delete" },
+    { "accel": "F5", "pretty": "F5" }
+  ],
+  "registration": {
+    "onSuccess": "persist accelerator; old binding released first",
+    "onFailure": "restore old binding; settings unchanged; result ok=false"
+  }
+}

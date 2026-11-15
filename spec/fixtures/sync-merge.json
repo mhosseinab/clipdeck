@@ -1,0 +1,98 @@
+{
+  "fixture": "sync-merge",
+  "specRef": "spec/behavior.md#9-sync-folder-based",
+  "description": "Cross-machine merge semantics for clipdeck-sync.jsonl. Remote rows are given as objects; in the file each is one JSON line {\"v\":1,\"item\":...}. Garbage lines that fail JSON parsing are skipped at parse time and are not represented here.",
+  "rowFormat": { "v": 1, "item": "<ClipItem>" },
+  "cases": [
+    {
+      "id": "merge-remote-item",
+      "local": [
+        { "id": "l1", "type": "text", "content": "from-a", "createdAt": 1000 }
+      ],
+      "remote": [
+        { "id": "r1", "type": "text", "content": "from-b", "createdAt": 2000 }
+      ],
+      "expected": {
+        "imported": 1,
+        "contents": ["from-b", "from-a"],
+        "orderRule": "createdAt descending"
+      }
+    },
+    {
+      "id": "merge-dedupe-by-content",
+      "local": [
+        { "id": "l1", "type": "text", "content": "shared", "createdAt": 1000 }
+      ],
+      "remote": [
+        { "id": "r1", "type": "text", "content": "shared", "createdAt": 2000 }
+      ],
+      "expected": { "imported": 0, "contents": ["shared"], "orderRule": "unchanged" }
+    },
+    {
+      "id": "merge-id-collision-skipped",
+      "local": [
+        { "id": "dup", "type": "text", "content": "local-version", "createdAt": 1000 }
+      ],
+      "remote": [
+        { "id": "dup", "type": "text", "content": "remote-version", "createdAt": 2000 }
+      ],
+      "expected": { "imported": 0, "contents": ["local-version"], "orderRule": "unchanged" },
+      "note": "v2 tightening: id collision skips regardless of content"
+    },
+    {
+      "id": "merge-invalid-rows-skipped",
+      "local": [],
+      "remote": [
+        null,
+        { "type": "text", "content": "no-id" },
+        { "id": "x", "content": "no-type" },
+        { "id": "ok", "type": "text", "content": "valid", "createdAt": 500 }
+      ],
+      "expected": { "imported": 1, "skipped": 3, "contents": ["valid"], "orderRule": "unchanged" },
+      "note": "missing id, missing type, or null rows are skipped and counted"
+    },
+    {
+      "id": "merge-remote-stack-reset",
+      "local": [],
+      "remote": [
+        { "id": "s1", "type": "text", "content": "queued", "createdAt": 500, "stackOrder": 2 }
+      ],
+      "expected": {
+        "imported": 1,
+        "contents": ["queued"],
+        "stackedCount": 0,
+        "orderRule": "unchanged"
+      }
+    },
+    {
+      "id": "merge-interleaved-timestamps",
+      "local": [
+        { "id": "l1", "type": "text", "content": "old", "createdAt": 100 },
+        { "id": "l2", "type": "text", "content": "new", "createdAt": 300 }
+      ],
+      "remote": [
+        { "id": "r1", "type": "text", "content": "mid", "createdAt": 200 }
+      ],
+      "expected": {
+        "imported": 1,
+        "contents": ["new", "mid", "old"],
+        "orderRule": "createdAt descending"
+      }
+    },
+    {
+      "id": "merge-second-pass-noop",
+      "local": [],
+      "remote": [
+        { "id": "r1", "type": "text", "content": "once", "createdAt": 100 }
+      ],
+      "mergeTwice": true,
+      "expected": {
+        "firstImported": 1,
+        "secondImported": 0,
+        "contents": ["once"],
+        "orderRule": "unchanged"
+      },
+      "note": "byte-offset tracking: unchanged file is a no-op on the second merge"
+    }
+  ]
+}

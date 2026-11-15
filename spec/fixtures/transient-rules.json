@@ -1,0 +1,117 @@
+{
+  "fixture": "transient-rules",
+  "specRef": "spec/behavior.md#22-skip-rules",
+  "description": "Transient clipboard markers and source-app skip rules. Marker matching is against the clipboard's advertised format list (exact string membership).",
+  "markers": [
+    "org.nspasteboard.TransientType",
+    "de.petermaurer.TransientPasteboardType",
+    "com.agilebits.onepassword"
+  ],
+  "confidentialAppPattern": "keychain|password|1password|bitwarden|keepass|lastpass",
+  "confidentialAppPatternFlags": "i",
+  "blocklistMatchRule": "case-insensitive substring of sourceApp within any non-empty excludedApps entry",
+  "cases": [
+    {
+      "id": "blocklist-exact-bundle-id",
+      "sourceApp": "com.apple.keychainaccess",
+      "excludedApps": ["com.apple.keychainaccess"],
+      "ignoreConfidential": true,
+      "expect": "skip",
+      "rule": "blocklist"
+    },
+    {
+      "id": "blocklist-substring-case-insensitive",
+      "sourceApp": "1Password",
+      "excludedApps": ["password"],
+      "ignoreConfidential": true,
+      "expect": "skip",
+      "rule": "blocklist"
+    },
+    {
+      "id": "blocklist-empty-entry-ignored",
+      "sourceApp": "Terminal",
+      "excludedApps": [""],
+      "ignoreConfidential": false,
+      "expect": "keep",
+      "rule": "none"
+    },
+    {
+      "id": "blocklist-null-source-app",
+      "sourceApp": null,
+      "excludedApps": ["terminal"],
+      "ignoreConfidential": true,
+      "expect": "keep",
+      "rule": "none",
+      "note": "no sourceApp attribution: neither blocklist nor confidential can match"
+    },
+    {
+      "id": "confidential-bitwarden",
+      "sourceApp": "Bitwarden",
+      "excludedApps": [],
+      "ignoreConfidential": true,
+      "expect": "skip",
+      "rule": "confidential"
+    },
+    {
+      "id": "confidential-keepassxc",
+      "sourceApp": "KeePassXC",
+      "excludedApps": [],
+      "ignoreConfidential": true,
+      "expect": "skip",
+      "rule": "confidential"
+    },
+    {
+      "id": "confidential-lastpass-substring",
+      "sourceApp": "my-lastpass-extension-host",
+      "excludedApps": [],
+      "ignoreConfidential": true,
+      "expect": "skip",
+      "rule": "confidential"
+    },
+    {
+      "id": "confidential-disabled",
+      "sourceApp": "Bitwarden",
+      "excludedApps": [],
+      "ignoreConfidential": false,
+      "expect": "keep",
+      "rule": "none"
+    },
+    {
+      "id": "ordinary-app",
+      "sourceApp": "Safari",
+      "excludedApps": ["com.apple.keychainaccess", "1Password"],
+      "ignoreConfidential": true,
+      "expect": "keep",
+      "rule": "none"
+    },
+    {
+      "id": "ordinary-app-benign-substring",
+      "sourceApp": "Passwordless Demo App",
+      "excludedApps": [],
+      "ignoreConfidential": false,
+      "expect": "keep",
+      "rule": "none",
+      "note": "confidential regex would match 'password', but the rule is disabled"
+    }
+  ],
+  "markerCases": [
+    {
+      "id": "transient-present",
+      "formats": ["public.utf8-plain-text", "org.nspasteboard.TransientType"],
+      "ignoreTransient": true,
+      "expect": "skip"
+    },
+    {
+      "id": "transient-present-rule-off",
+      "formats": ["public.utf8-plain-text", "org.nspasteboard.TransientType"],
+      "ignoreTransient": false,
+      "expect": "keep"
+    },
+    {
+      "id": "transient-absent",
+      "formats": ["public.utf8-plain-text", "public.png"],
+      "ignoreTransient": true,
+      "expect": "keep"
+    }
+  ]
+}

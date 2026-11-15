@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "sync-line.schema.json",
+  "title": "ClipDeck sync JSONL row (clipdeck-sync.jsonl, one per line)",
+  "type": "object",
+  "required": ["v", "item"],
+  "additionalProperties": true,
+  "properties": {
+    "v": { "const": 1 },
+    "item": {
+      "type": "object",
+      "required": ["id", "type", "content", "createdAt"],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "type": {
+          "enum": ["text", "link", "code", "color", "image", "file", "html"]
+        },
+        "content": { "type": "string" },
+        "preview": { "type": "string" },
+        "title": { "type": "string" },
+        "sourceApp": { "type": ["string", "null"] },
+        "createdAt": { "type": "integer", "minimum": 0 },
+        "sizeBytes": { "type": "integer", "minimum": 0 },
+        "pinned": { "type": "boolean" },
+        "pinboardId": { "type": ["string", "null"] },
+        "stackOrder": { "type": ["integer", "null"] },
+        "imageFile": { "type": "string" }
+      }
+    }
+  }
+}

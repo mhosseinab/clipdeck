@@ -1,79 +1,40 @@
 # ClipDeck
 
-Open-source clipboard manager for **macOS** and **Linux (Ubuntu)**, inspired by the
-feature set of commercial clipboard managers — an original implementation with its
-own code, name, and assets.
+Open-source clipboard manager — native apps for **macOS** (Swift) and
+**Linux/Ubuntu** (Rust). A fast, searchable clipboard history with pinboards,
+a paste stack, privacy rules, and a quick-paste overlay.
 
-Copy anything and it lands instantly in a fast, searchable history strip: text,
-links, code, colors, images, files and rich text. Paste it back anywhere with a
-keystroke, organize into pinboards, and queue multiple items with the paste stack.
+> **v2 native rewrite in progress.** The behavioral contract and cross-platform
+> test fixtures live in [`spec/`](spec/) — both native implementations must
+> pass them. The previous Electron implementation is frozen on the
+> [`v1-electron`](https://github.com/mhosseinab/clipdeck/tree/v1-electron)
+> branch; its releases remain downloadable.
 
-## Features
+## Layout
 
-- **Clipboard watcher** — text, rich text, images, files, links, code, color values
-- **Quick-paste overlay** — glass bottom sheet with a horizontal card strip (global shortcut, default `Ctrl/Cmd+Shift+V`)
-- **Search** — instant filtering across full history (`Ctrl/Cmd+F`)
-- **Pinboards** — pin items and organize into named boards via the sidebar
-- **Paste stack** — queue several items (`Ctrl/Cmd+S`), paste them in order (FIFO/LIFO)
-- **Paste as plain text** — `Shift+Enter`, or make it the default in Settings
-- **Privacy rules** — honors clipboard *transient* marks (password managers), app blocklist, confidential-source skip
-- **Sounds** — subtle synthesized copy/paste feedback (no sampled assets)
-- **Tray icon** — pause watching, clear history, settings, quit
-- **Settings** — history limits, shortcut, content rules, excluded apps
-
-## Download
-
-Grab the latest release from the [Releases page](https://github.com/mhosseinab/clipdeck/releases):
-
-- **Linux (Ubuntu)**: `ClipDeck-*-linux-amd64.deb` or `ClipDeck-*-linux-x86_64.AppImage`
-- **macOS**: `ClipDeck-*-mac-*.dmg` (Apple Silicon & Intel)
-
-> macOS builds are unsigned for now — if Gatekeeper blocks the app, run
-> `xattr -d com.apple.quarantine /Applications/ClipDeck.app` after installing.
-> On Ubuntu 23.10+ if the app fails to start (restricted user namespaces), run it
-> with `--no-sandbox` or install the `.deb` and see the note below.
-
-## Install & run (from source)
-
-```bash
-npm install
-npm run dev        # vite + electron (development)
-npm start          # production build + run
+```
+spec/          behavior contract (behavior.md) + shared test fixtures
+  fixtures/    machine-readable vectors — run `node spec/verify.mjs`
+  schema/      JSON Schemas for the store and sync formats
+  examples/    golden example files
+apps/
+  macos/       Swift (AppKit + SwiftUI overlay)
+  linux/       Rust workspace (core + app)
 ```
 
-Linux note: development runs Electron with `--no-sandbox` (see `package.json`).
-For the full Chromium sandbox instead:
+## Development
 
 ```bash
-sudo chown root:root node_modules/electron/dist/chrome-sandbox
-sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+node spec/verify.mjs     # validate fixtures against the reference oracle
 ```
 
-## Keyboard
+Per-platform build instructions arrive with each app (Phase 2+).
 
-| Key | Action |
-| --- | --- |
-| `←` `→` | navigate cards |
-| `Enter` | paste |
-| `Shift+Enter` | paste as plain text |
-| `Ctrl/Cmd+C` | copy |
-| `Ctrl/Cmd+S` | push to paste stack |
-| `Delete` | delete item |
-| `Esc` | close overlay |
+## Format compatibility
 
-## Platform support
-
-| Platform | Status |
-| --- | --- |
-| Linux (Wayland/X11) | working (`wl-clipboard`/`xclip`, `wtype`/`xdotool`) |
-| macOS | compiles; runtime QA pending (osascript paste simulation) |
-
-## Architecture
-
-- Electron 33 + React 18 + TypeScript + Vite
-- `electron/` — main process: clipboard watcher, store, tray, shortcuts, platform glue
-- `src/` — renderer: overlay UI, settings, synthesized sounds
-- History stored in a JSON file under the app's user-data directory (SQLite migration planned)
+The store (`clipdeck-store.json`) and sync (`clipdeck-sync.jsonl`) formats are
+compatible with the v1 Electron app — existing history keeps working. Deviations
+from v1 behavior are listed in `spec/behavior.md` §14.
 
 ## License
 

@@ -1,0 +1,37 @@
+{
+  "fixture": "settings-defaults",
+  "specRef": "spec/behavior.md#13-settings",
+  "description": "Exact default values for every settings key. Single source of truth for both implementations.",
+  "defaults": {
+    "watchEnabled": true,
+    "soundCopy": true,
+    "soundPaste": true,
+    "maxItems": 5000,
+    "shortcut": "CommandOrControl+Shift+V",
+    "launchAtLogin": true,
+    "theme": "dark",
+    "excludedApps": [
+      "com.apple.keychainaccess",
+      "com.apple.Passwords",
+      "1Password",
+      "Bitwarden",
+      "KeePass"
+    ],
+    "ignoreTransient": true,
+    "ignoreConfidential": true,
+    "generateLinkPreviews": true,
+    "pasteAsPlainText": false,
+    "stackDirection": "fifo",
+    "plainTextApps": [],
+    "syncDirectory": "",
+    "showInScreenShare": true,
+    "hooks": []
+  },
+  "valueConstraints": {
+    "maxItems": { "min": 1, "max": 1000000 },
+    "stackDirection": { "enum": ["fifo", "lifo"] },
+    "theme": { "enum": ["dark", "light"] },
+    "shortcut": { "grammarRef": "accelerators.json" },
+    "hooks": { "item": { "event": { "enum": ["copy", "paste"] }, "command": { "minLength": 1 } } }
+  }
+}
