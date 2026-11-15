@@ -15,7 +15,7 @@ use crate::state::{AppState, Effects};
 use crate::presentation::Presenter;
 use crate::tray::{self, TrayView};
 use crate::worker::WorkerCmd;
-use clipdeck_core::{pretty_accel, record_accel, ClipItem, KeyPress, Pinboard};
+use clipdeck_core::{record_accel, ClipItem, KeyPress, Pinboard};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, RwLock};
 use tiny_skia::{Color, Pixmap};
@@ -28,7 +28,7 @@ use winit::window::{Window, WindowId};
 const W: f32 = 1240.0;
 const H: f32 = 372.0;
 
-const KEYBOARD_HINTS: [(&str, &str); 9] = [("Left/Right", "Select"), ("Enter", "Copy"), ("Shift+Enter", "Plain"),
+const KEYBOARD_HINTS: [(&str, &str); 9] = [("← | →", "Select"), ("↵", "Copy"), ("Shift + ↵", "Plain"),
             ("Double-click", "Copy"), ("Ctrl+E", "Edit"), ("Ctrl+C", "Copy"),
             ("Ctrl+S", "Stack"), ("Del", "Remove"), ("Esc", "Close")];
 
@@ -63,8 +63,6 @@ enum Hit {
     ToggleDeleteHistory,
     Toggle(&'static str),
     ShortcutCapture,
-    Export,
-    Import,
 }
 
 #[derive(Debug, Clone)]
@@ -862,8 +860,6 @@ impl Ui {
                 self.capture = true;
                 self.request_redraw();
             }
-            Hit::Export => self.apply(AppEvent::Export { path: "clipdeck-export.json".into() }),
-            Hit::Import => self.apply(AppEvent::Import { path: "clipdeck-export.json".into() }),
         }
     }
 
@@ -1406,28 +1402,29 @@ impl Ui {
 
     fn draw_shortcut_setup(&mut self, pm: &mut Pixmap, x: f32, y: f32) {
         let f = self.fonts.clone();
-        round_rect(pm, x, y, 440.0, 300.0, 12.0, rgba(28, 31, 45, 255));
+        round_rect(pm, x, y, 440.0, 184.0, 12.0, rgba(28, 31, 45, 255));
         f.text_l(pm, x + 18.0, y + 22.0, 14.0, "Global shortcut", Face::Medium, rgba(245, 247, 252, 255));
-        let description = if self.wayland_session {
-            "On GNOME Wayland, create a system shortcut to show or hide ClipDeck."
+        let instruction = if self.wayland_session { "Add a custom shortcut in Keyboard Settings." }
+            else { "Click to record, or use Keyboard Settings." };
+        f.text_l(pm, x + 18.0, y + 44.0, 12.0, instruction, Face::Regular, rgba(238, 240, 246, 220));
+        round_rect(pm, x + 18.0, y + 58.0, 404.0, 44.0, 6.0, rgba(0, 0, 0, 70));
+        if self.wayland_session {
+            f.wrap_lines(pm, x + 26.0, y + 64.0, 388.0, 10.5, &shortcut_command(), Face::Mono, 2);
         } else {
-            "Record a shortcut on the left, or create a GNOME system shortcut below."
-        };
-        f.wrap_lines(pm, x + 18.0, y + 40.0, 404.0, 12.0, description, Face::Regular, 2);
-        f.wrap_lines(pm, x + 18.0, y + 84.0, 404.0, 11.0,
-            "Keyboard Settings > View and Customize Shortcuts > Custom Shortcuts > +", Face::Regular, 2);
-        f.text_l(pm, x + 18.0, y + 132.0, 11.0, "Name: ClipDeck · Shortcut: Ctrl+Shift+V (or unused keys)", Face::Regular, rgba(238, 240, 246, 230));
-        f.text_l(pm, x + 18.0, y + 155.0, 11.0, "Command:", Face::Medium, rgba(238, 240, 246, 200));
-        round_rect(pm, x + 18.0, y + 168.0, 404.0, 44.0, 6.0, rgba(0, 0, 0, 70));
-        f.wrap_lines(pm, x + 26.0, y + 174.0, 388.0, 10.5, &shortcut_command(), Face::Mono, 2);
-        round_rect(pm, x + 18.0, y + 226.0, 118.0, 30.0, 7.0, rgba(255, 255, 255, 24));
-        f.text_c(pm, x + 77.0, y + 241.0, 11.0, "Copy Command", Face::Medium, rgba(245, 247, 252, 255));
-        self.hit(x + 18.0, y + 226.0, 118.0, 30.0, Hit::CopyShortcutCommand);
-        round_rect(pm, x + 146.0, y + 226.0, 276.0, 30.0, 7.0, rgba(109, 149, 255, 235));
-        f.text_c(pm, x + 284.0, y + 241.0, 12.0, "Open Keyboard Settings", Face::Medium, rgba(255, 255, 255, 255));
-        self.hit(x + 146.0, y + 226.0, 276.0, 30.0, Hit::OpenKeyboardSettings);
-        let note = self.settings_notice.as_deref().unwrap_or("Keep ClipDeck running for this shortcut.");
-        f.wrap_lines(pm, x + 18.0, y + 268.0, 404.0, 10.5, note, Face::Regular, 2);
+            let shortcut = if self.capture { "Press keys... (Esc cancels)".to_string() }
+                else { self.app.settings().shortcut.replace("CommandOrControl", "Ctrl").replace("Control", "Ctrl") };
+            f.text_c(pm, x + 220.0, y + 80.0, 12.0, &shortcut, Face::Medium, rgba(245, 247, 252, 255));
+            self.hit(x + 18.0, y + 58.0, 404.0, 44.0, Hit::ShortcutCapture);
+        }
+        round_rect(pm, x + 18.0, y + 114.0, 118.0, 30.0, 7.0, rgba(255, 255, 255, 24));
+        f.text_c(pm, x + 77.0, y + 129.0, 11.0, "Copy Command", Face::Medium, rgba(245, 247, 252, 255));
+        self.hit(x + 18.0, y + 114.0, 118.0, 30.0, Hit::CopyShortcutCommand);
+        round_rect(pm, x + 146.0, y + 114.0, 276.0, 30.0, 7.0, rgba(109, 149, 255, 235));
+        f.text_c(pm, x + 284.0, y + 129.0, 12.0, "Keyboard Settings", Face::Medium, rgba(255, 255, 255, 255));
+        self.hit(x + 146.0, y + 114.0, 276.0, 30.0, Hit::OpenKeyboardSettings);
+        if let Some(notice) = self.settings_notice.as_deref() {
+            f.wrap_lines(pm, x + 18.0, y + 154.0, 404.0, 10.5, notice, Face::Regular, 2);
+        }
     }
 
     fn setting_unavailable_reason(&self, key: &str) -> Option<&'static str> {
@@ -1438,79 +1435,55 @@ impl Ui {
         }
     }
 
-    fn draw_settings(&mut self, pm: &mut Pixmap, w: f32, h: f32) {
+    fn draw_setting_row(&mut self, pm: &mut Pixmap, x: f32, y: f32, width: f32,
+        label: &str, on: bool, key: &'static str) {
+        let f = self.fonts.clone();
+        f.text_l(pm, x, y + 13.0, 12.0, label, Face::Regular, rgba(238, 240, 246, 230));
+        let tx = x + width - 50.0;
+        round_rect(pm, tx, y + 2.0, 50.0, 22.0, 11.0,
+            if on { rgba(109, 149, 255, 235) } else { rgba(255, 255, 255, 26) });
+        round_rect(pm, if on { tx + 30.0 } else { tx + 3.0 }, y + 5.0, 16.0, 16.0, 8.0, rgba(255, 255, 255, 245));
+        self.hit(x, y, width, 26.0, Hit::Toggle(key));
+    }
+
+    fn draw_settings(&mut self, pm: &mut Pixmap, w: f32, _h: f32) {
         let f = self.fonts.clone();
         let s = self.app.settings().clone();
-        let left = 210.0f32;
-        f.text_l(pm, left, 30.0, 15.0, "ClipDeck Settings", Face::Medium, rgba(238, 240, 246, 245));
+        let left = 210.0;
+        let right = (w - 470.0).max(left + 330.0);
+        let width = right - left - 24.0;
+        f.text_l(pm, left, 30.0, 15.0, "Settings", Face::Medium, rgba(238, 240, 246, 245));
+        round_rect(pm, left, 52.0, width, 96.0, 12.0, rgba(28, 31, 45, 255));
+        f.text_l(pm, left + 18.0, 72.0, 13.0, "General", Face::Medium, rgba(245, 247, 252, 255));
+        self.draw_setting_row(pm, left + 18.0, 82.0, width - 36.0, "Watch clipboard", s.watch_enabled, "watch");
+        self.draw_setting_row(pm, left + 18.0, 112.0, width - 36.0, "Start at login", s.launch_at_login, "login");
 
-        let rows: [(&str, bool, Hit); 11] = [
-            ("Watch clipboard", s.watch_enabled, Hit::Toggle("watch")),
-            ("Play sound on copy", s.sound_copy, Hit::Toggle("sound_copy")),
-            ("Play sound on paste", s.sound_paste, Hit::Toggle("sound_paste")),
-            ("Ignore transient content", s.ignore_transient, Hit::Toggle("transient")),
-            ("Confidential-app filter", s.ignore_confidential, Hit::Toggle("confidential")),
-            ("Generate link previews", s.generate_link_previews, Hit::Toggle("link_previews")),
-            ("Always paste as plain text", s.paste_as_plain_text, Hit::Toggle("plain")),
-            ("Start ClipDeck at login", s.launch_at_login, Hit::Toggle("login")),
-            ("Hide overlay from screen sharing", s.show_in_screen_share, Hit::Toggle("share")),
-            ("Paste stack: LIFO (off = FIFO)", s.stack_direction == "lifo", Hit::Toggle("stack_dir")),
-            ("Global shortcut", false, Hit::ShortcutCapture),
+        round_rect(pm, left, 160.0, width, 192.0, 12.0, rgba(28, 31, 45, 255));
+        f.text_l(pm, left + 18.0, 180.0, 13.0, "Clipboard", Face::Medium, rgba(245, 247, 252, 255));
+        let rows = [
+            ("Sound on capture and copy", s.sound_copy, "sound_copy"),
+            ("Sound on stack copy", s.sound_paste, "sound_paste"),
+            ("Plain text for stack copies", s.paste_as_plain_text, "plain"),
+            ("Stack: newest clip first", s.stack_direction == "lifo", "stack_dir"),
         ];
-        let row_h = 24.0f32;
-        let top = 52.0f32;
-        let panel_x = (w - 470.0).max(left + 330.0);
-        let controls_right = panel_x - 30.0;
-        for (n, (label, on, hit)) in rows.iter().enumerate() {
-            let y = top + n as f32 * row_h;
-            if *hit == Hit::ShortcutCapture && self.wayland_session { continue; }
-            let unavailable = match hit {
-                Hit::Toggle(key) => self.setting_unavailable_reason(key),
-                _ => None,
-            };
-            f.text_l(pm, left, y + 12.0, 12.0, label, Face::Regular,
-                rgba(238, 240, 246, if unavailable.is_some() { 160 } else { 220 }));
-            if let Some(reason) = unavailable {
-                let status_x = controls_right - 108.0;
-                round_rect(pm, status_x, y + 1.0, 108.0, 22.0, 7.0, rgba(255, 255, 255, 12));
-                f.text_c(pm, status_x + 54.0, y + 12.0, 11.0, reason, Face::Regular, rgba(238, 240, 246, 180));
-                continue;
-            }
-            match hit {
-                Hit::ShortcutCapture => {
-                    let shown = if self.capture { "Press keys\u{2026} (Esc cancels)".to_string() } else { pretty_accel(&s.shortcut) };
-                    let bx = (controls_right - 180.0).max(left + 160.0);
-                    let bw = controls_right - bx;
-                    round_rect(pm, bx, y + 1.0, bw, 22.0, 7.0, if self.capture { rgba(143, 176, 255, 46) } else { rgba(255, 255, 255, 16) });
-                    f.text_c(pm, bx + bw / 2.0, y + 12.0, 11.0, &shown, Face::Medium, rgba(238, 240, 246, 235));
-                }
-                _ => {
-                    let tx = controls_right - 50.0;
-                    let bg = if *on { rgba(109, 149, 255, 235) } else { rgba(255, 255, 255, 26) };
-                    round_rect(pm, tx, y + 1.0, 50.0, 22.0, 11.0, bg);
-                    round_rect(pm, if *on { tx + 30.0 } else { tx + 3.0 }, y + 4.0, 16.0, 16.0, 8.0, rgba(255, 255, 255, 245));
-                }
-            }
-            if *hit != Hit::ShortcutCapture || !self.wayland_session {
-                self.hit(left, y, controls_right - left, row_h, *hit);
-            }
+        for (index, (label, on, key)) in rows.iter().enumerate() {
+            self.draw_setting_row(pm, left + 18.0, 190.0 + index as f32 * 30.0, width - 36.0, label, *on, key);
         }
-        if self.wayland_session {
-            f.wrap_lines(pm, left, top + 10.0 * row_h, controls_right - left, 11.0,
-                "Clipboard source is unknown on Wayland. App exclusions and confidential-app filtering cannot protect these captures.",
-                Face::Regular, 2);
+        if !self.wayland_session {
+            self.draw_setting_row(pm, left + 18.0, 310.0, width - 36.0,
+                "Confidential-app filter", s.ignore_confidential, "confidential");
         }
-        self.draw_shortcut_setup(pm, panel_x, top);
-        let by = top + rows.len() as f32 * row_h + 10.0;
-        if by + 28.0 <= h - 6.0 {
-            round_rect(pm, left, by, 104.0, 28.0, 8.0, rgba(255, 255, 255, 16));
-            f.text_c(pm, left + 52.0, by + 14.0, 12.0, "Export", Face::Medium, rgba(238, 240, 246, 235));
-            self.hit(left, by, 104.0, 28.0, Hit::Export);
-            round_rect(pm, left + 116.0, by, 104.0, 28.0, 8.0, rgba(255, 255, 255, 16));
-            f.text_c(pm, left + 168.0, by + 14.0, 12.0, "Import", Face::Medium, rgba(238, 240, 246, 235));
-            self.hit(left + 116.0, by, 104.0, 28.0, Hit::Import);
-        }
+        self.draw_shortcut_setup(pm, right, 52.0);
+        round_rect(pm, right, 248.0, 440.0, 104.0, 12.0, rgba(28, 31, 45, 255));
+        f.text_l(pm, right + 18.0, 270.0, 13.0, "Privacy", Face::Medium, rgba(245, 247, 252, 255));
+        let privacy = if self.wayland_session {
+            "Sensitive content is not automatically excluded on Wayland. Pause watching when needed."
+        } else {
+            "Source-app filtering is best effort. Screen capture can include the overlay."
+        };
+        f.wrap_lines(pm, right + 18.0, 288.0, 404.0, 12.0, privacy, Face::Regular, 3);
     }
+
 }
 
 fn keyboard_settings_command() -> std::process::Command {
@@ -1735,6 +1708,18 @@ mod tests {
             assert!(ui.hits.iter().any(|(_,_,_,_,hit)| *hit == Hit::Toggle("watch")));
             if !wayland { assert!(ui.hits.iter().any(|(_,_,_,_,hit)| *hit == Hit::Toggle("confidential"))); }
         }
+    }
+
+    #[test]
+    fn settings_group_startup_separately_from_clipboard() {
+        let mut ui = fixture_ui();
+        ui.settings = true;
+        ui.render_frame(W as u32, H as u32);
+        let rect = |hit| ui.hits.iter().find(|(_,_,_,_,action)| *action == hit).unwrap();
+        let watch = rect(Hit::Toggle("watch"));
+        let login = rect(Hit::Toggle("login"));
+        let plain = rect(Hit::Toggle("plain"));
+        assert!(watch.1 < login.1 && login.1 + login.3 + 20.0 < plain.1, "startup is mixed into clipboard settings");
     }
 
     #[test]

@@ -299,9 +299,9 @@ Default: **enabled**.
 
 Transient-marker filtering, screen-share exclusion and network link previews
 are unsupported in the current Linux capture/rendering backend. Settings MUST
-label these controls as unsupported and omit interactive toggles. In a Wayland
+omit these unavailable controls. In a Wayland
 session, clipboard-source identity is unknown: confidential-app filtering is
-disabled and Settings explains that app exclusions cannot protect such captures.
+omitted and Settings explains that app exclusions cannot protect such captures.
 Stored preference values remain preserved for format compatibility. Watch/pause
 remains available. No OS permissions or simulated input are used to infer origins.
 

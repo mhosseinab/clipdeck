@@ -140,7 +140,7 @@ for project rules, reusable skills, optional agents, and scoped check commands.
 GNOME Wayland needs a system custom shortcut. Source-app identity is unknown
 for native Wayland captures, so app-based exclusion/confidential filters cannot
 protect those captures. Transient clipboard markers and screen-share exclusion
-are unsupported. Their controls are disabled in Settings. Do not rely on those
+are unsupported. Unavailable options are omitted from Settings. Do not rely on those
 features for privacy; pause watching or quit ClipDeck when handling sensitive
 content.
 
