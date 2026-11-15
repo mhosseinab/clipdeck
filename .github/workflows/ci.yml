@@ -4,85 +4,27 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+# Verification only. No tag trigger, publishing job or write token.
+permissions:
+  contents: read
 
 jobs:
-  spec:
+  linux:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: node spec/verify.mjs
-
-  linux:
-    runs-on: ubuntu-24.04
-    needs: spec
-    steps:
-      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/linux
-      - run: cargo test --manifest-path apps/linux/Cargo.toml
-      - run: cargo build --release --manifest-path apps/linux/Cargo.toml
-
-  macos:
-    runs-on: macos-15
-    needs: spec
-    steps:
-      - uses: actions/checkout@v4
-      - run: swift test --package-path apps/macos
-      - run: swift build -c release --package-path apps/macos
-
-  release-linux:
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-24.04
-    needs: [linux, macos]
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --release --manifest-path apps/linux/Cargo.toml
-      - name: Package artifacts
-        run: |
-          cd apps/linux
-          install -Dm755 target/release/clipdeck /tmp/pkg/clipdeck
-          tar -czf clipdeck-linux-x86_64.tar.gz -C /tmp/pkg clipdeck
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: apps/linux/clipdeck-linux-x86_64.tar.gz
-
-  release-macos:
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: macos-15
-    needs: [linux, macos]
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-      - run: swift build -c release --package-path apps/macos
-      - name: Package app bundle
-        run: |
-          BIN=$(find apps/macos/.build/release -maxdepth 1 -name ClipDeckApp -type f | head -1)
-          mkdir -p /tmp/ClipDeck.app/Contents/MacOS /tmp/ClipDeck.app/Contents/Resources
-          cp "$BIN" /tmp/ClipDeck.app/Contents/MacOS/ClipDeck
-          printf 'APPL????' > /tmp/ClipDeck.app/Contents/PkgInfo
-          cat > /tmp/ClipDeck.app/Contents/Info.plist <<'PLIST'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0"><dict>
-            <key>CFBundleExecutable</key><string>ClipDeck</string>
-            <key>CFBundleIdentifier</key><string>dev.clipdeck.app</string>
-            <key>CFBundleName</key><string>ClipDeck</string>
-            <key>CFBundlePackageType</key><string>APPL</string>
-            <key>CFBundleShortVersionString</key><string>2.0.0</string>
-            <key>LSMinimumSystemVersion</key><string>13.0</string>
-            <key>LSUIElement</key><true/>
-          </dict></plist>
-          PLIST
-          cd /tmp && tar -czf clipdeck-macos-universal.tar.gz ClipDeck.app
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: /tmp/clipdeck-macos-universal.tar.gz
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config desktop-file-utils
+      - name: Install packaging helper
+        run: cargo install cargo-deb --version 3.8.0 --locked
+      - name: Verify and package local candidate
+        run: bash scripts/package.sh

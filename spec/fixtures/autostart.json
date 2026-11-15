@@ -1,7 +1,7 @@
 {
   "fixture": "autostart",
   "specRef": "spec/behavior.md#11-launch-at-login",
-  "description": "Byte-exact Linux autostart entries and platform delegation. Desktop-entry content ends with a trailing newline.",
+  "description": "Byte-exact Linux autostart entries. Desktop-entry content ends with a trailing newline.",
   "linuxPathTemplate": "~/.config/autostart/clipdeck.desktop",
   "cases": [
     {
@@ -32,27 +32,10 @@
       "isPackaged": true,
       "execPath": "/opt/ClipDeck/clipdeck",
       "expectedFile": null
-    },
-    {
-      "id": "macos-delegation-enable",
-      "platform": "darwin",
-      "enable": true,
-      "isPackaged": true,
-      "execPath": "/Applications/ClipDeck.app/Contents/MacOS/clipdeck",
-      "expectedLoginItemSettings": true
-    },
-    {
-      "id": "macos-delegation-disable",
-      "platform": "darwin",
-      "enable": false,
-      "isPackaged": true,
-      "execPath": "/Applications/ClipDeck.app/Contents/MacOS/clipdeck",
-      "expectedLoginItemSettings": false
     }
   ],
   "notes": [
     "AppImage installs record the AppImage path, not the extracted binary (it disappears on exit).",
-    "The native binary needs no arguments, so Exec never carries an app path (v2 deviation from the Electron build).",
-    "macOS and Windows delegate to the OS login-item API; the fixture records the boolean passed."
+    "The native binary needs no arguments, so Exec never carries an app path."
   ]
 }

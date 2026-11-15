@@ -156,7 +156,7 @@
       "id": "text-if-return",
       "raw": "if (x) return;",
       "expected": "text",
-      "note": "v1 quirk preserved: 'if'/'return' are not keyword-signal words, and all punctuation shares one signal"
+      "note": "'if'/'return' are not keyword-signal words, and all punctuation shares one signal"
     },
     {
       "id": "text-json-oneline",

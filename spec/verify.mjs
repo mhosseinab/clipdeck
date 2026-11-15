@@ -2,7 +2,7 @@
 /**
  * spec/verify.mjs — fixture self-check with a REFERENCE IMPLEMENTATION of
  * spec/behavior.md (§3, §4, §5, §8, §9, §10, §11). This is a test oracle only;
- * it is not shipped. The Rust and Swift implementations must pass the same
+ * it is not shipped. The Rust implementation must pass these
  * fixture files.
  *
  * Usage: node spec/verify.mjs   (exit 0 = all fixtures internally consistent)
@@ -94,10 +94,10 @@ function simulateStore(caseObj) {
     } else {
       items.unshift(item);
     }
-    // trim
-    const keep = items.filter((i) => i.pinned || i.pinboardId !== null || i.stackOrder !== null);
-    const overflow = items.filter((i) => !(i.pinned || i.pinboardId !== null || i.stackOrder !== null));
-    items = keep.concat(overflow.slice(0, Math.max(0, maxItems - keep.length)));
+    // Protected entries survive; filter in place to preserve recency order.
+    const protectedItem = (i) => i.pinned || i.pinboardId !== null || i.stackOrder !== null;
+    let budget = Math.max(0, maxItems - items.filter(protectedItem).length);
+    items = items.filter((i) => protectedItem(i) || budget-- > 0);
   }
   if (caseObj.reorder) {
     const byContent = new Map(items.map((i) => [i.content, i]));
@@ -308,8 +308,6 @@ for (const c of fixtures.autostart.cases) {
   if (c.expectedFile) {
     const exe = c.appImage ?? c.execPath;
     check(renderDesktopEntry(exe) === c.expectedFile.content, `autostart/${c.id}: desktop entry mismatch`);
-  } else if ("expectedLoginItemSettings" in c) {
-    check(typeof c.expectedLoginItemSettings === "boolean", `autostart/${c.id}: delegation boolean`);
   } else {
     check(c.expectedFile === null, `autostart/${c.id}: expected removal`);
   }

@@ -1,0 +1,9 @@
+# Project roles only: inherit model, permissions, MCP and feature settings.
+# Ask for task-specific delegation permission before spawning agents.
+[agents.clipdeck_explorer]
+description = "Locate ClipDeck contract, Rust implementations and tests without editing."
+config_file = "agents/explorer.toml"
+
+[agents.clipdeck_reviewer]
+description = "Review ClipDeck diffs for correctness, privacy and contract consistency without editing."
+config_file = "agents/reviewer.toml"

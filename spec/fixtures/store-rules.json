@@ -5,6 +5,97 @@
   "dedupeKey": "type + \"|\" + content",
   "cases": [
     {
+      "id": "new-capture-before-protected-items",
+      "maxItems": 10,
+      "adds": [
+        {
+          "content": "pinned",
+          "type": "text",
+          "pinned": true
+        },
+        {
+          "content": "board",
+          "type": "text",
+          "pinboardId": "pb-1"
+        },
+        {
+          "content": "stack",
+          "type": "text",
+          "stackOrder": 1
+        },
+        {
+          "content": "new",
+          "type": "text"
+        }
+      ],
+      "expected": {
+        "contents": [
+          "new",
+          "stack",
+          "board",
+          "pinned"
+        ],
+        "count": 4
+      }
+    },
+    {
+      "id": "trim-preserves-order-around-protected-items",
+      "maxItems": 3,
+      "adds": [
+        {
+          "content": "old",
+          "type": "text"
+        },
+        {
+          "content": "pinned",
+          "type": "text",
+          "pinned": true
+        },
+        {
+          "content": "recent",
+          "type": "text"
+        },
+        {
+          "content": "new",
+          "type": "text"
+        }
+      ],
+      "expected": {
+        "contents": [
+          "new",
+          "recent",
+          "pinned"
+        ],
+        "count": 3
+      }
+    },
+    {
+      "id": "dedupe-refresh-before-protected-items",
+      "maxItems": 10,
+      "adds": [
+        {
+          "content": "repeat",
+          "type": "text"
+        },
+        {
+          "content": "pinned",
+          "type": "text",
+          "pinned": true
+        },
+        {
+          "content": "repeat",
+          "type": "text"
+        }
+      ],
+      "expected": {
+        "contents": [
+          "repeat",
+          "pinned"
+        ],
+        "count": 2
+      }
+    },
+    {
       "id": "dedupe-moves-to-front",
       "maxItems": 100,
       "adds": [
@@ -132,7 +223,7 @@
       "local": [{ "id": "same-id", "content": "one", "type": "text" }],
       "import": [{ "id": "same-id", "content": "two", "type": "text" }],
       "expected": { "imported": 0, "skipped": 1, "count": 1 },
-      "note": "v2 tightening: id collision skips regardless of content"
+      "note": "An id collision skips regardless of content"
     },
     {
       "id": "import-malformed-counted",

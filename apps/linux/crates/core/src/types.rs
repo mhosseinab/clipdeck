@@ -119,7 +119,7 @@ pub struct Hook {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase")]
 pub struct Settings {
     pub watch_enabled: bool,
     pub sound_copy: bool,

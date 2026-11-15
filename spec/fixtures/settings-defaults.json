@@ -1,7 +1,7 @@
 {
   "fixture": "settings-defaults",
   "specRef": "spec/behavior.md#13-settings",
-  "description": "Exact default values for every settings key. Single source of truth for both implementations.",
+  "description": "Exact default values for every settings key. Single source of truth for settings defaults.",
   "defaults": {
     "watchEnabled": true,
     "soundCopy": true,

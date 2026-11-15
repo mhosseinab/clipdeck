@@ -296,8 +296,10 @@ dependencies = [
  "png 0.17.16",
  "serde_json",
  "sha2",
+ "smithay-client-toolkit",
  "softbuffer",
  "tiny-skia",
+ "wayland-client",
  "winit",
  "x11-dl",
 ]

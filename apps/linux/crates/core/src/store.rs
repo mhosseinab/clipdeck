@@ -78,21 +78,21 @@ impl Store {
         item
     }
 
-    /// §5.2: kept = keep (list order) ++ overflow[0 .. maxItems - |keep|].
+    /// §5.2: protect pinned/board/stack clips without moving them ahead of
+    /// newer captures. Only the oldest unprotected entries use the trim budget.
     fn trim(&mut self) {
-        let max = self.settings.max_items as usize;
-        let mut keep: Vec<ClipItem> = Vec::new();
-        let mut overflow: Vec<ClipItem> = Vec::new();
-        for i in self.items.drain(..) {
-            if i.is_keep() {
-                keep.push(i);
+        let protected = self.items.iter().filter(|item| item.is_keep()).count();
+        let mut budget = (self.settings.max_items as usize).saturating_sub(protected);
+        self.items.retain(|item| {
+            if item.is_keep() {
+                true
+            } else if budget > 0 {
+                budget -= 1;
+                true
             } else {
-                overflow.push(i);
+                false
             }
-        }
-        let budget = max.saturating_sub(keep.len());
-        keep.extend(overflow.into_iter().take(budget));
-        self.items = keep;
+        });
     }
 
     pub fn find(&self, id: &str) -> Option<&ClipItem> {

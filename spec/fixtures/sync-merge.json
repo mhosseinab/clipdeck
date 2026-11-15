@@ -37,7 +37,7 @@
         { "id": "dup", "type": "text", "content": "remote-version", "createdAt": 2000 }
       ],
       "expected": { "imported": 0, "contents": ["local-version"], "orderRule": "unchanged" },
-      "note": "v2 tightening: id collision skips regardless of content"
+      "note": "An id collision skips regardless of content"
     },
     {
       "id": "merge-invalid-rows-skipped",

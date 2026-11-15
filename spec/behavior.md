@@ -1,10 +1,10 @@
-# ClipDeck Behavior Contract (v2)
+# ClipDeck Behavior Contract
 
 This document is normative. `MUST`, `SHOULD`, and `MAY` follow RFC 2119.
 The JSON files under `fixtures/` are machine-readable test vectors for this
 contract; where prose and fixtures disagree, the fixtures win.
 
-Implementations covered: `apps/macos` (Swift) and `apps/linux` (Rust).
+Supported implementation: `apps/linux` (Rust). Linux is the only release target.
 Behavior described here is reimplemented from observed feature evidence of a
 commercial clipboard manager; no code or assets of that product are used.
 
@@ -96,8 +96,6 @@ truth). Unknown settings keys read from disk MUST be preserved on write
 
 ### 2.5 sourceApp
 
-- macOS: name of the frontmost application process at the moment of capture
-  (before the ClipDeck UI takes focus).
 - Linux: window-manager title of the active window, or `null` when unknown.
 - Capture is asynchronous by nature; `sourceApp` MAY be attributed up to
   250 ms after the change event.
@@ -167,8 +165,12 @@ their relative order after the listed ones.
 ```
 keep     = items where pinned OR pinboardId != null OR stackOrder != null
 overflow = all other items, in list order
-kept     = keep ++ overflow[0 .. max(0, settings.maxItems - |keep|)]
+budget   = max(0, settings.maxItems - |keep|)
+kept     = filter items in original list order, retaining all keep items
+           and only the first budget overflow items
 ```
+- Protection affects retention only: pinned, board and stack entries MUST NOT
+  move ahead of newer captures. Dedupe refresh still moves its entry to the front.
 - `|keep|` may exceed `maxItems`; then no overflow item survives.
 - Dropped `image` items have their image files deleted (best effort).
 
@@ -176,8 +178,8 @@ kept     = keep ++ overflow[0 .. max(0, settings.maxItems - |keep|)]
 
 - **Export**: JSON `{version: 1, exportedAt: <ISO-8601>, items, pinboards}`.
 - **Import**: for each incoming item, skip when the dedupe key (§2.4) is
-  present locally OR its `id` already exists locally (v2 tightening;
-  implementations MUST count skips). Malformed entries (missing `id`,
+  present locally OR its `id` already exists locally (implementations MUST
+  count skips). Malformed entries (missing `id`,
   non-string `content`) are skipped and counted. Imported items keep their
   `createdAt`; `stackOrder` is reset to `null`. Pinboards merge by `id`.
   Return `{imported, skipped}`.
@@ -189,7 +191,7 @@ kept     = keep ++ overflow[0 .. max(0, settings.maxItems - |keep|)]
 - Push: `stackOrder = (count of items with stackOrder != null) + 1`.
 - Pop: FIFO (`stackDirection: "fifo"`) takes the lowest `stackOrder`;
   LIFO (`"lifo"`) takes the highest. The popped item is copied to the
-  clipboard, `paste` hooks fire, then simulated paste runs, then the item is
+  clipboard, `paste` hooks fire, then the item is
   deleted from the store.
 - `unstack(id)` sets `stackOrder = null`; `clearStack` unstacks all.
 - Stack membership survives trim (§5.2).
@@ -206,8 +208,9 @@ kept     = keep ++ overflow[0 .. max(0, settings.maxItems - |keep|)]
    when `!plain` and the content contains markup; everything else, or any
    case with `plain == true`, → plain text.
 3. Fire `paste` hooks (§8).
-4. Hide the overlay, wait ~60 ms, then simulate the system paste keystroke
-   (`Cmd+V` on macOS; `Ctrl+V` on Linux) into the previously focused app.
+4. Hide the overlay. The user pastes into the destination application. Linux
+   Enter/double-click activation copies without simulated keyboard or mouse
+   input; Ctrl+C copies without hiding. See the Linux override in §13.
 
 ---
 
@@ -274,7 +277,6 @@ Default: **enabled**.
   in `fixtures/autostart.json`; disable removes the file. Exec line:
   `Exec="<absolute-executable>"` (native binary needs no arguments; AppImage
   installs use the AppImage path).
-- **macOS**: `SMAppService`/login-item API (`openAtLogin` on/off).
 - The setting is applied on change and re-applied at startup of packaged
   builds.
 
@@ -288,31 +290,29 @@ Default: **enabled**.
 | `ignoreConfidential` | §2.2 rule 4 |
 | `excludedApps` | §2.2 rule 3 |
 | `generateLinkPreviews` | When true, `link` cards MAY fetch `<origin>/favicon.ico` (timeout 4000 ms, ≤ 512 KiB, cache per origin). When false, no network request is made. |
-| `showInScreenShare` | When false, the overlay is excluded from screen capture (macOS `NSWindowSharingNone` / content protection; Linux best-effort / documented as unsupported). |
+| `showInScreenShare` | When false, screen-capture exclusion is requested. Unsupported on the current Linux backend; do not rely on it to hide clipboard content. |
 | `soundCopy` / `soundPaste` | Play short synthesized feedback on capture / paste. Sounds are original synthesized tones, bundled nowhere — generated at runtime. |
 
 ---
+
+### Linux capability visibility
+
+Transient-marker filtering, screen-share exclusion and network link previews
+are unsupported in the current Linux capture/rendering backend. Settings MUST
+label these controls as unsupported and omit interactive toggles. In a Wayland
+session, clipboard-source identity is unknown: confidential-app filtering is
+disabled and Settings explains that app exclusions cannot protect such captures.
+Stored preference values remain preserved for format compatibility. Watch/pause
+remains available. No OS permissions or simulated input are used to infer origins.
 
 ## 13. UI layer (informational)
 
 The overlay presents: search field, sidebar (History / Pinned / pinboards),
 horizontal card strip with per-type previews, paste-stack panel, hints row,
-settings window. Keyboard: `←/→` navigate, `⏎` paste, `⇧⏎` paste plain,
-`E` edit, `Cmd/Ctrl+C` copy, `Cmd/Ctrl+S` push to stack, `⌫` delete,
-`Cmd/Ctrl+F` search, `Esc` close. Cards are draggable for reorder (grip) and
-`image`/`file` cards drag out to other applications. Preview rendering shows
-at most 600 scalars of text/code.
-
----
-
-## 14. Deviations from the v1 Electron app (explicit)
-
-1. Truncation counts Unicode scalars (v1: UTF-16 code units).
-2. Import and sync skip rows whose `id` already exists (v1: content-only).
-3. Linux autostart Exec carries no app-path argument (v1: Electron dev quirk).
-4. Accelerator strings are canonically ordered per §10 (v1 emitted recording
-   order but did not normalize).
-5. Title truncation appends `…` like preview truncation (v1 titles were hard
-   slices without an ellipsis).
-6. Sync merge sorts the list by `createdAt` descending after importing
-   (v1 inserted at the front in file order).
+settings window. Linux keyboard: `←/→` select, `Enter` or double-click copy and
+close, `Shift+Enter` copy plain and close, `Ctrl+E` edit, `Ctrl+C` copy without
+closing, `Ctrl+S` stack, `Del` remove with confirmation, `Esc` close. Cards drag
+to sidebar boards. Removing from a board preserves History unless the user
+opts into deleting from History. Each card has a pin/unpin control. No synthetic
+input is used. External drag-out and manual card reordering are not implemented.
+Preview rendering shows at most 600 scalars of text/code.

@@ -2,6 +2,7 @@
 name = "clipdeck-app"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "Fast native clipboard manager with search, pinboards and paste stack"
 
@@ -15,6 +16,8 @@ serde_json = "1"
 arboard = { version = "3", default-features = false, features = ["image-data", "wayland-data-control"] }
 winit = "0.30"
 softbuffer = "0.4"
+wayland-client = "0.31.15"
+smithay-client-toolkit = { version = "0.19.2", default-features = false }
 tiny-skia = "0.11"
 fontdue = "0.9"
 global-hotkey = "0.6"
@@ -30,10 +33,11 @@ copyright = "2026 ClipDeck contributors"
 license-file = ["LICENSE", "0"]
 section = "utils"
 priority = "optional"
-extended-description = "ClipDeck is a fast, native clipboard manager with a searchable\nhistory, pinboards, paste stack, privacy rules and a quick-paste overlay.\nRuns in the background with a tray icon and global shortcut."
-depends = "$auto"
+extended-description = "ClipDeck is a fast, native clipboard manager with a searchable\nhistory, pinboards, paste stack, privacy rules and a quick-paste overlay.\nRuns in the background with a tray icon. GNOME Wayland shortcuts require\nconfiguration in system Keyboard Settings."
+depends = "$auto, libx11-6, libx11-xcb1, libxcb1, libxrandr2, libxi6, libxcursor1, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libwayland-cursor0, libwayland-egl1"
+recommends = "gnome-control-center"
 assets = [
-    ["../../target/release/clipdeck", "usr/bin/", "755"],
+    ["target/release/clipdeck", "usr/bin/", "755"],
     ["assets/clipdeck.desktop", "usr/share/applications/", "644"],
     ["assets/icon.png", "usr/share/icons/hicolor/256x256/apps/clipdeck.png", "644"],
     ["assets/fonts/OFL.txt", "usr/share/doc/clipdeck/OFL-Roboto.txt", "644"],

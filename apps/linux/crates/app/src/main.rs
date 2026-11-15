@@ -1,21 +1,28 @@
-//! ClipDeck daemon for Linux: clipboard watcher, overlay UI, global shortcut,
-//! CLI control channel. Behavior is defined by spec/behavior.md.
+//! ClipDeck daemon for Linux. Composition root only: CLI, thread wiring,
+//! lifecycle. All state lives in `AppState` on the main thread; every
+//! cross-thread signal travels as `AppEvent` through one dispatcher in `ui`.
 
+mod draw;
+mod events;
+mod hotkey;
+mod presentation;
+mod sounds;
 mod state;
 mod tray;
-mod watcher;
-mod paste;
-mod hotkey;
-mod sounds;
 mod ui;
+mod worker;
 
+use events::AppEvent;
 use state::AppState;
 use std::io::{Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::path::{Path, PathBuf};
+use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::time::Duration;
+use std::sync::mpsc::channel;
+use std::sync::{Arc, RwLock};
 
-const SOCKET_PATH: &str = "/tmp/clipdeck.sock";
+const MAX_CONTROL_BYTES: u64 = 32;
 
 fn user_data() -> PathBuf {
     if let Some(p) = std::env::var_os("CLIPDECK_USER_DATA") {
@@ -26,9 +33,7 @@ fn user_data() -> PathBuf {
 }
 
 fn exe_path() -> String {
-    std::env::current_exe()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_default()
+    std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
 fn main() {
@@ -36,21 +41,31 @@ fn main() {
     match args.first().map(String::as_str) {
         None | Some("run") => run_daemon(),
         Some("toggle") | Some("open") | Some("settings") | Some("quit") => {
-            send_command(args[0].clone());
+            if let Err(error) = send_command(&args[0]) {
+                eprintln!("cannot contact ClipDeck for this profile: {error}");
+                std::process::exit(1);
+            }
         }
         Some("export") => {
-            let state = Arc::new(Mutex::new(AppState::open(&user_data())));
+            let app = AppState::open(&user_data());
             let path = args.get(1).cloned().unwrap_or_else(|| "clipdeck-export.json".into());
-            let json = state.lock().unwrap().store.export_json();
-            std::fs::write(&path, json).ok();
+            std::fs::write(&path, app.store.export_json()).ok();
             println!("exported to {path}");
         }
         Some("import") => {
-            let state = Arc::new(Mutex::new(AppState::open(&user_data())));
+            let data = user_data();
+            let _profile_lock = match lock_profile(&data) {
+                Ok(lock) => lock,
+                Err(error) => {
+                    eprintln!("cannot import while the profile is in use; quit ClipDeck first: {error}");
+                    std::process::exit(1);
+                }
+            };
+            let mut app = AppState::open(&data);
             if let Some(path) = args.get(1) {
                 if let Ok(raw) = std::fs::read_to_string(path) {
-                    let counts = state.lock().unwrap().store.import_json(&raw);
-                    state.lock().unwrap().store.save();
+                    let counts = app.store.import_json(&raw);
+                    app.save();
                     println!("imported {}, skipped {}", counts.imported, counts.skipped);
                 }
             }
@@ -77,61 +92,170 @@ fn print_help() {
     );
 }
 
-/* ---------- single-instance control channel ---------- */
+/* ---------- single-instance control channel -> AppEvents ---------- */
 
-fn send_command(cmd: String) {
-    match UnixStream::connect(SOCKET_PATH) {
-        Ok(mut s) => {
-            s.write_all(cmd.as_bytes()).ok();
+fn send_command(cmd: &str) -> std::io::Result<()> {
+    let path = control_socket_path(&user_data())?;
+    verify_private_directory(path.parent().expect("control socket parent"))?;
+    let mut stream = UnixStream::connect(path)?;
+    stream.set_write_timeout(Some(Duration::from_millis(250)))?;
+    stream.write_all(cmd.as_bytes())
+}
+
+fn current_uid() -> std::io::Result<u32> {
+    // Linux procfs reports the owner of this process without an external command
+    // or trusting a user-provided UID environment variable.
+    Ok(std::fs::metadata("/proc/self")?.uid())
+}
+
+fn owned_directory(path: &Path) -> std::io::Result<std::fs::Metadata> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    if !metadata.is_dir() || metadata.uid() != current_uid()? || metadata.mode() & 0o022 != 0 {
+        return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied,
+            format!("{} must be an owned directory, not writable by other users", path.display())));
+    }
+    Ok(metadata)
+}
+
+fn verify_private_directory(path: &Path) -> std::io::Result<()> {
+    let metadata = owned_directory(path)?;
+    if metadata.mode() & 0o077 != 0 {
+        return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied,
+            format!("{} must have owner-only permissions (0700)", path.display())));
+    }
+    Ok(())
+}
+
+fn control_socket_path(data: &Path) -> std::io::Result<PathBuf> {
+    let profile = data.canonicalize()?;
+    owned_directory(&profile)?;
+    Ok(profile.join(".ipc").join("control.sock"))
+}
+
+fn prepare_control_socket(data: &Path) -> std::io::Result<PathBuf> {
+    let socket = control_socket_path(data)?;
+    let directory = socket.parent().expect("control socket parent");
+    match std::fs::DirBuilder::new().mode(0o700).create(directory) {
+        Ok(()) => {},
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {},
+        Err(error) => return Err(error),
+    }
+    verify_private_directory(directory)?;
+    Ok(socket)
+}
+
+fn lock_profile(data: &Path) -> std::io::Result<std::fs::File> {
+    std::fs::DirBuilder::new().recursive(true).mode(0o700).create(data)?;
+    let profile = data.canonicalize()?;
+    let metadata = std::fs::symlink_metadata(&profile)?;
+    if !metadata.is_dir() || metadata.uid() != current_uid()? {
+        return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied,
+            "profile must be a directory owned by the current user"));
+    }
+    // Earlier versions inherited umask (commonly 0002), allowing group writes.
+    // Seal only this app-owned profile before creating its private endpoint.
+    std::fs::set_permissions(&profile, std::fs::Permissions::from_mode(0o700))?;
+    let path = profile.join("instance.lock");
+    if let Ok(metadata) = std::fs::symlink_metadata(&path) {
+        if !metadata.is_file() || metadata.uid() != current_uid()? {
+            return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "invalid profile lock file"));
         }
-        Err(_) => eprintln!("clipdeck daemon is not running"),
+    }
+    let lock = std::fs::OpenOptions::new().create(true).truncate(false)
+        .read(true).write(true).mode(0o600).open(path)?;
+    lock.try_lock().map_err(std::io::Error::from)?;
+    // Keep this descriptor alive for every operation that can write the store.
+    // Never unlink the lock file: that would allow locking a different inode.
+    Ok(lock)
+}
+
+/// Called while holding the profile lock, so stale recovery cannot race another
+/// ClipDeck process for this profile. Never unlink a non-socket path.
+fn bind_control_listener(path: &Path) -> std::io::Result<UnixListener> {
+    let bind = || -> std::io::Result<UnixListener> {
+        let listener = UnixListener::bind(path)?;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        Ok(listener)
+    };
+    match bind() {
+        Ok(listener) => Ok(listener),
+        Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => {
+            if UnixStream::connect(path).is_ok() {
+                return Err(error);
+            }
+            let metadata = std::fs::symlink_metadata(path)?;
+            if !metadata.file_type().is_socket() || metadata.uid() != current_uid()? {
+                return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied,
+                    "refusing to remove a non-socket or foreign control endpoint"));
+            }
+            std::fs::remove_file(path)?;
+            bind()
+        }
+        Err(error) => Err(error),
     }
 }
 
-fn spawn_control_server(shared: Arc<Mutex<AppState>>, proxy: winit::event_loop::EventLoopProxy<ui::Command>) {
-    let _ = std::fs::remove_file(SOCKET_PATH);
-    if let Ok(listener) = UnixListener::bind(SOCKET_PATH) {
-        std::thread::spawn(move || {
-            for stream in listener.incoming() {
-                let Ok(mut s) = stream else { continue };
-                let mut buf = String::new();
-                s.read_to_string(&mut buf).ok();
-                let cmd = match buf.trim() {
-                    "quit" => ui::Command::Quit,
-                    "settings" => ui::Command::OpenSettings,
-                    "open" => ui::Command::Show,
-                    _ => ui::Command::Toggle,
-                };
-                if proxy.send_event(cmd).is_err() {
-                    break;
-                }
-                if buf.trim() == "quit" {
-                    break;
-                }
-            }
-        });
+fn read_control_event(stream: &mut UnixStream) -> std::io::Result<Option<AppEvent>> {
+    stream.set_read_timeout(Some(Duration::from_millis(250)))?;
+    let mut command = String::new();
+    stream.take(MAX_CONTROL_BYTES + 1).read_to_string(&mut command)?;
+    if command.len() as u64 > MAX_CONTROL_BYTES {
+        return Ok(None);
     }
+    Ok(match command.trim() {
+        "quit" => Some(AppEvent::Quit),
+        "settings" => Some(AppEvent::OpenSettings),
+        "open" => Some(AppEvent::Show),
+        "toggle" => Some(AppEvent::Toggle),
+        _ => None,
+    })
+}
+
+fn spawn_control_server(listener: UnixListener, events: winit::event_loop::EventLoopProxy<AppEvent>) {
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut s) = stream else { continue };
+            let Ok(Some(event)) = read_control_event(&mut s) else { continue };
+            let quit = matches!(event, AppEvent::Quit);
+            if events.send_event(event).is_err() || quit {
+                break;
+            }
+        }
+    });
 }
 
 /* ---------- daemon ---------- */
 
 fn run_daemon() {
     let data = user_data();
-    std::fs::create_dir_all(&data).ok();
-    let shared = Arc::new(Mutex::new(AppState::open(&data)));
+    let _profile_lock = match lock_profile(&data) {
+        Ok(lock) => lock,
+        Err(error) => {
+            eprintln!("ClipDeck profile is already in use or unavailable: {error}");
+            std::process::exit(1);
+        }
+    };
+    // Each canonical profile has a private endpoint. CLI commands must use the
+    // same CLIPDECK_USER_DATA value; there is no shared /tmp fallback.
+    let socket = prepare_control_socket(&data).unwrap_or_else(|error| {
+        eprintln!("cannot prepare ClipDeck control socket: {error}");
+        std::process::exit(1);
+    });
+    let listener = bind_control_listener(&socket).unwrap_or_else(|error| {
+        eprintln!("cannot bind ClipDeck control socket {}: {error} (Unix socket paths must fit the platform limit)", socket.display());
+        std::process::exit(1);
+    });
+    let app = AppState::open(&data);
 
     // Launch-at-login per spec §11 (re-applied at startup of the daemon).
-    {
-        let st = shared.lock().unwrap();
-        if st.store.settings.launch_at_login {
-            clipdeck_core::apply_login_item_linux(true, &exe_path(), &dirs_home()).ok();
-        }
+    if app.settings().launch_at_login {
+        clipdeck_core::apply_login_item_linux(true, &exe_path(), &home()).ok();
     }
 
-    let mut builder = winit::event_loop::EventLoop::<ui::Command>::with_user_event();
-    // QA/test hook: force the X11 backend (XWayland) so input injection tools
-    // can see the window; production defaults to Wayland-first selection.
-    if std::env::var_os("CLIPDECK_FORCE_X11").is_some() {
+    let mut builder = winit::event_loop::EventLoop::<AppEvent>::with_user_event();
+    let force_x11 = std::env::var("CLIPDECK_FORCE_X11").ok().map(|value| value != "0");
+    if prefer_x11(force_x11, std::env::var_os("WAYLAND_DISPLAY").is_some(),
+        std::env::var_os("DISPLAY").is_some(), &std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default()) {
         use winit::platform::x11::EventLoopBuilderExtX11;
         builder.with_x11();
     }
@@ -139,39 +263,121 @@ fn run_daemon() {
         eprintln!("event loop: {e}");
         std::process::exit(1);
     });
-    let proxy = event_loop.create_proxy();
-    spawn_control_server(shared.clone(), proxy.clone());
-    tray::spawn(shared.clone(), proxy.clone());
+    let events = event_loop.create_proxy();
 
-    // Clipboard watcher thread (§2).
-    let watch_state = shared.clone();
-    let watch_proxy = proxy.clone();
-    std::thread::spawn(move || watcher::run(watch_state, watch_proxy));
+    // Producers: control socket, clipboard worker, hotkey, tray.
+    spawn_control_server(listener, events.clone());
 
-    // Sync merge ticker (§9).
-    let sync_state = shared.clone();
-    std::thread::spawn(move || loop {
-        std::thread::sleep(std::time::Duration::from_secs(30));
-        let mut guard = sync_state.lock().unwrap();
-        let st = &mut *guard;
-        let counts = st.sync.merge(&mut st.store);
-        if counts.imported > 0 {
-            st.store.save();
-            drop(st);
-            // UI refresh happens on next paint tick via generation counter
-        }
-    });
+    let (worker_tx, worker_rx) = channel();
+    worker::spawn(events.clone(), worker_rx, app.store.image_dir.clone(), app.settings().watch_enabled);
 
-    // Global shortcut (§10); on Wayland this may fail — CLI/DE binding works.
-    let accel = shared.lock().unwrap().store.settings.shortcut.clone();
-    hotkey::register(&accel, proxy);
+    let (accel_tx, accel_rx) = channel();
+    let initial_accel = app.settings().shortcut.clone();
+    hotkey::spawn(events.clone(), accel_rx, initial_accel);
 
-    if let Err(e) = ui::run(shared, event_loop) {
+    let tray_view = Arc::new(RwLock::new(tray::TrayView {
+        watching: app.settings().watch_enabled,
+        recent: vec![],
+    }));
+    tray::spawn(tray_view.clone(), events.clone());
+
+    if let Err(e) = ui::run(app, events, worker_tx, accel_tx, tray_view, event_loop) {
         eprintln!("ui error: {e}");
     }
-    let _ = std::fs::remove_file(SOCKET_PATH);
+    let _ = std::fs::remove_file(socket);
 }
 
-fn dirs_home() -> PathBuf {
+fn home() -> PathBuf {
     std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default()
+}
+
+fn prefer_x11(force: Option<bool>, wayland: bool, display: bool, desktop: &str) -> bool {
+    // GNOME's native Wayland protocol has no client always-on-top request.
+    // Reuse the existing XWayland path, where the ABOVE hint is supported.
+    force.unwrap_or_else(|| wayland && display && desktop.split(':').any(|part| part.eq_ignore_ascii_case("gnome")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn control_socket_is_private_and_profile_scoped() {
+        let root = std::env::temp_dir().join(format!("clipdeck-ipc-{}", clipdeck_core::store::uuid_v4ish()));
+        let a = root.join("a");
+        let b = root.join("b");
+        let _a_lock = lock_profile(&a).unwrap();
+        let _b_lock = lock_profile(&b).unwrap();
+        let a_socket = prepare_control_socket(&a).unwrap();
+        let b_socket = prepare_control_socket(&b).unwrap();
+        assert_ne!(a_socket, b_socket);
+        assert_eq!(control_socket_path(&a).unwrap(), a_socket);
+        assert_eq!(a_socket.parent().unwrap().metadata().unwrap().permissions().mode() & 0o777, 0o700);
+        let a_listener = bind_control_listener(&a_socket).unwrap();
+        let b_listener = bind_control_listener(&b_socket).unwrap();
+        assert_eq!(a_socket.metadata().unwrap().permissions().mode() & 0o777, 0o600);
+        assert!(UnixStream::connect(&a_socket).is_ok());
+        assert!(UnixStream::connect(&b_socket).is_ok());
+        drop((a_listener, b_listener));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn private_ipc_rejects_symlink_and_open_permissions() {
+        let root = std::env::temp_dir().join(format!("clipdeck-insecure-ipc-{}", clipdeck_core::store::uuid_v4ish()));
+        let _lock = lock_profile(&root).unwrap();
+        let outside = root.join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join(".ipc")).unwrap();
+        assert!(prepare_control_socket(&root).is_err());
+        std::fs::remove_file(root.join(".ipc")).unwrap();
+        std::fs::create_dir(root.join(".ipc")).unwrap();
+        std::fs::set_permissions(root.join(".ipc"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(prepare_control_socket(&root).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn control_input_is_bounded_and_idle_clients_time_out() {
+        let (mut reader, mut writer) = UnixStream::pair().unwrap();
+        writer.write_all(b"open").unwrap();
+        writer.shutdown(std::net::Shutdown::Write).unwrap();
+        assert!(matches!(read_control_event(&mut reader).unwrap(), Some(AppEvent::Show)));
+        let (mut reader, mut writer) = UnixStream::pair().unwrap();
+        writer.write_all(&[b'x'; 100]).unwrap();
+        assert!(read_control_event(&mut reader).unwrap().is_none());
+        let (mut reader, _idle_writer) = UnixStream::pair().unwrap();
+        assert!(read_control_event(&mut reader).is_err());
+    }
+
+    #[test]
+    fn profile_lock_prevents_two_store_writers_and_releases_on_drop() {
+        let data = std::env::temp_dir().join(format!("clipdeck-lock-{}", clipdeck_core::store::uuid_v4ish()));
+        std::fs::create_dir_all(&data).unwrap();
+        let first = lock_profile(&data).unwrap();
+        assert!(lock_profile(&data).is_err());
+        drop(first);
+        assert!(lock_profile(&data).is_ok());
+        std::fs::remove_dir_all(data).unwrap();
+    }
+
+    #[test]
+    fn control_listener_preserves_live_socket_and_recovers_stale_socket() {
+        let path = std::env::temp_dir().join(format!("clipdeck-socket-{}", clipdeck_core::store::uuid_v4ish()));
+        let first = bind_control_listener(&path).unwrap();
+        assert!(bind_control_listener(&path).is_err());
+        assert!(UnixStream::connect(&path).is_ok());
+        drop(first);
+        let recovered = bind_control_listener(&path).unwrap();
+        drop(recovered);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn gnome_uses_xwayland_for_supported_always_on_top() {
+        assert!(prefer_x11(None, true, true, "ubuntu:GNOME"));
+        assert!(!prefer_x11(None, true, false, "GNOME"));
+        assert!(!prefer_x11(Some(false), true, true, "GNOME"));
+        assert!(prefer_x11(Some(true), false, true, ""));
+    }
 }

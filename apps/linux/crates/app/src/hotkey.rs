@@ -1,14 +1,15 @@
-//! Global shortcut (spec/behavior.md §10). `global-hotkey` covers X11; on
-//! Wayland compositors without a global-shortcut protocol the registration
-//! fails and the CLI (`clipdeck toggle`) or a DE shortcut binding is the path.
+//! Global shortcut: ONE thread owns the `GlobalHotKeyManager` (sole owner of
+//! X11 grabs). Presses become `AppEvent::Toggle`; re-registrations arrive on a
+//! command channel. Registration failure degrades gracefully (CLI works).
 
-use crate::ui::Command;
+use crate::events::AppEvent;
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager};
-use std::sync::Arc;
+use std::sync::mpsc::Receiver;
+use std::time::Duration;
+use winit::event_loop::EventLoopProxy;
 
-/// Parse our canonical accelerator (e.g. "CommandOrControl+Shift+V") into a
-/// global-hotkey HotKey. `CommandOrControl` maps to Ctrl on Linux.
+/// Parse our canonical accelerator ("CommandOrControl+Shift+V") into a HotKey.
 pub fn parse_hotkey(accel: &str) -> Option<HotKey> {
     let mut mods = Modifiers::empty();
     let mut code: Option<Code> = None;
@@ -50,13 +51,7 @@ fn code_from_key(key: &str) -> Option<Code> {
     })
 }
 
-pub fn parse_key_event_code(code: &str) -> Option<Code> {
-    code_from_key(code)
-}
-
-/// x11-dl's default Xlib error handler aborts the process on BadAccess
-/// (e.g. the accelerator is already grabbed). Install a tolerant handler so
-/// a failed grab degrades gracefully; `clipdeck toggle` remains available.
+/// Tolerant X error handler: a failed grab must not abort the process.
 fn install_tolerant_x_error_handler() {
     use std::ffi::c_int;
     unsafe extern "C" fn quiet(
@@ -75,43 +70,38 @@ fn install_tolerant_x_error_handler() {
     }
 }
 
-/// Register the accelerator from settings and stream presses as `Command::Toggle`.
-pub fn register(accel: &str, proxy: winit::event_loop::EventLoopProxy<Command>) -> Option<GlobalHotKeyManager> {
-    install_tolerant_x_error_handler();
-    let manager = GlobalHotKeyManager::new().ok()?;
-    let hotkey = parse_hotkey(accel)?;
-    if manager.register(hotkey).is_err() {
-        return None;
-    }
+/// Spawn the single hotkey-owning thread. `accel_rx` accepts new accelerators
+/// (each replaces the previous registration).
+pub fn spawn(events: EventLoopProxy<AppEvent>, accel_rx: Receiver<String>, initial: String) {
     std::thread::spawn(move || {
-        let rx = GlobalHotKeyEvent::receiver();
+        install_tolerant_x_error_handler();
+        let Ok(manager) = GlobalHotKeyManager::new() else { return };
+        let mut current: Option<HotKey> = None;
+        let mut register = |manager: &GlobalHotKeyManager, accel: &str| -> Option<HotKey> {
+            let hk = parse_hotkey(accel)?;
+            if manager.register(hk).is_ok() {
+                Some(hk)
+            } else {
+                None
+            }
+        };
+        current = register(&manager, &initial);
+
+        let key_rx = GlobalHotKeyEvent::receiver();
         loop {
-            match rx.recv() {
-                Ok(_) => {
-                    if proxy.send_event(Command::Toggle).is_err() {
-                        break;
+            match accel_rx.recv_timeout(Duration::from_millis(50)) {
+                Ok(accel) => {
+                    if let Some(old) = current.take() {
+                        manager.unregister(old).ok();
                     }
+                    current = register(&manager, &accel);
                 }
-                Err(_) => break,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+            while let Ok(_ev) = key_rx.try_recv() {
+                events.send_event(AppEvent::Toggle).ok();
             }
         }
     });
-    Some(manager)
 }
-
-/// Re-register on settings change: unregister the old accelerator first (§10).
-pub fn reregister(
-    manager: &GlobalHotKeyManager,
-    old_accel: &str,
-    new_accel: &str,
-) -> bool {
-    if let Some(old) = parse_hotkey(old_accel) {
-        manager.unregister(old).ok();
-    }
-    match parse_hotkey(new_accel) {
-        Some(new) => manager.register(new).is_ok(),
-        None => false,
-    }
-}
-
-pub fn _unused(_: &Arc<()>) {}

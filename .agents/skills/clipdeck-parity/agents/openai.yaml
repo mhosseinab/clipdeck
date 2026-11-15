@@ -1,0 +1,4 @@
+interface:
+  display_name: "ClipDeck Parity"
+  short_description: "Keep Rust behavior aligned with fixtures"
+  default_prompt: "Use $clipdeck-parity for this ClipDeck task."

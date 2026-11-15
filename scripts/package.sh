@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Build local candidates only. Never installs, tags, uploads or publishes.
+set -euo pipefail
+[[ $# -eq 0 ]] || { echo 'Usage: bash scripts/package.sh' >&2; exit 2; }
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+for tool in cargo node dpkg-deb desktop-file-validate sha256sum tar; do
+  command -v "$tool" >/dev/null || { echo "Missing packaging tool: $tool" >&2; exit 1; }
+done
+cargo deb --version >/dev/null
+bash scripts/check.sh linux
+target_dir="$(cargo metadata --locked --no-deps --format-version 1 --manifest-path apps/linux/Cargo.toml | node -e 'let s=""; process.stdin.on("data", d => s += d); process.stdin.on("end", () => console.log(JSON.parse(s).target_directory));')"
+binary="$target_dir/release/clipdeck"
+output="$PWD/dist/candidate"
+stage="$(mktemp -d)"
+trap 'rm -rf "$stage"' EXIT
+mkdir -p "$output"
+# cargo-deb resolves target/release relative to the workspace's Cargo target dir.
+cargo deb --locked --no-build --manifest-path apps/linux/crates/app/Cargo.toml --output "$stage/clipdeck.deb"
+dpkg-deb --extract "$stage/clipdeck.deb" "$stage/payload"
+cmp "$binary" "$stage/payload/usr/bin/clipdeck"
+cmp apps/linux/crates/app/assets/icon.png "$stage/payload/usr/share/icons/hicolor/256x256/apps/clipdeck.png"
+desktop-file-validate "$stage/payload/usr/share/applications/clipdeck.desktop"
+[[ -f "$stage/payload/usr/share/doc/clipdeck/copyright" ]]
+[[ -f "$stage/payload/usr/share/doc/clipdeck/OFL-Roboto.txt" ]]
+version="$(dpkg-deb --field "$stage/clipdeck.deb" Version)"
+arch="$(dpkg-deb --field "$stage/clipdeck.deb" Architecture)"
+name="clipdeck_${version}_${arch}"
+mkdir "$stage/$name"
+cp -a "$stage/payload/usr" "$stage/$name/"
+cp README.md LICENSE "$stage/$name/"
+tar -czf "$stage/$name.tar.gz" -C "$stage" "$name"
+# Extract and compare: a manifest listing alone cannot prove a usable payload.
+mkdir "$stage/unpacked"
+tar -xzf "$stage/$name.tar.gz" -C "$stage/unpacked"
+cmp "$binary" "$stage/unpacked/$name/usr/bin/clipdeck"
+mv "$stage/clipdeck.deb" "$output/$name.deb"
+mv "$stage/$name.tar.gz" "$output/"
+(cd "$output" && sha256sum "$name.deb" "$name.tar.gz" > SHA256SUMS && sha256sum --check SHA256SUMS)
+dpkg-deb --field "$output/$name.deb" Package Version Architecture Depends
+printf 'Local candidates: %s\nNothing was installed or published.\n' "$output"

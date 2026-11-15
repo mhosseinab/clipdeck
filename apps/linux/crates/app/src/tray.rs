@@ -1,62 +1,31 @@
-//! System tray (StatusNotifierItem) via `ksni` — pure Rust, no system libs.
-//! On Ubuntu/GNOME the AppIndicator extension surfaces it; where no SNI host
-//! exists the tray silently stays absent and the CLI/shortcut remain the
-//! control surfaces.
+//! System tray (StatusNotifierItem) via `ksni`. The tray SENDS `AppEvent`s;
+//! display state arrives as a read-only `TrayView` mirror (single writer:
+//! main thread; readers: dbus thread) — never held across code.
 
-use crate::state::AppState;
-use crate::ui::Command;
+use crate::events::{AppEvent, WritePurpose};
+use clipdeck_core::ClipItem;
 use ksni::menu::StandardItem;
 use ksni::{Icon, MenuItem, Tray};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 use winit::event_loop::EventLoopProxy;
 
-pub struct ClipTray {
-    pub state: Arc<Mutex<AppState>>,
-    pub proxy: EventLoopProxy<Command>,
+#[derive(Default)]
+pub struct TrayView {
+    pub watching: bool,
+    pub recent: Vec<(String, String)>,
 }
 
-/// 22×22 ARGB32 icon matching the app's design language (rounded dark tile,
-/// indigo tab, white card) — drawn in code, no external asset.
+pub struct ClipTray {
+    pub view: Arc<RwLock<TrayView>>,
+    pub events: EventLoopProxy<AppEvent>,
+}
+
+/// Supplied tray PNG converted from straight RGBA to ARGB32 network byte order.
 pub fn tray_icon() -> Icon {
-    const S: i32 = 22;
-    let mut data = vec![0u8; (S * S * 4) as usize];
-    let put = |data: &mut Vec<u8>, x: i32, y: i32, a: u8, r: u8, g: u8, b: u8| {
-        if x < 0 || y < 0 || x >= S || y >= S {
-            return;
-        }
-        let o = ((y * S + x) * 4) as usize;
-        data[o] = a;
-        data[o + 1] = r;
-        data[o + 2] = g;
-        data[o + 3] = b;
-    };
-    for y in 1..S - 1 {
-        for x in 1..S - 1 {
-            let corner = (x < 4 || x >= S - 3) && (y < 4 || y >= S - 3);
-            if corner && x != 3 && x != S - 4 && y != 3 && y != S - 4 {
-                continue;
-            }
-            put(&mut data, x, y, 255, 24, 26, 38);
-        }
-    }
-    for y in 3..6 {
-        for x in 8..13 {
-            put(&mut data, x, y, 255, 122, 162, 255);
-        }
-    }
-    for y in 8..18 {
-        for x in 4..17 {
-            put(&mut data, x, y, 255, 235, 238, 246);
-        }
-    }
-    for y in 10..16 {
-        for x in 6..14 {
-            if y % 2 == 0 {
-                put(&mut data, x, y, 255, 140, 146, 166);
-            }
-        }
-    }
-    Icon { width: S, height: S, data }
+    let (width, height, rgba) = crate::worker::decode_png(include_bytes!("../assets/icon_tray.png"))
+        .expect("bundled tray PNG");
+    let data = rgba.chunks_exact(4).flat_map(|p| [p[3], p[0], p[1], p[2]]).collect();
+    Icon { width: width as i32, height: height as i32, data }
 }
 
 impl Tray for ClipTray {
@@ -73,38 +42,25 @@ impl Tray for ClipTray {
     }
 
     fn activate(&mut self, _x: i32, _y: i32) {
-        self.proxy.send_event(Command::Show).ok();
+        self.events.send_event(AppEvent::Show).ok();
     }
 
     fn menu(&self) -> Vec<MenuItem<Self>> {
-        let watching = self.state.lock().map(|s| s.store.settings.watch_enabled).unwrap_or(true);
-        let recents: Vec<(String, String)> = self
-            .state
-            .lock()
-            .map(|s| {
-                s.store
-                    .recent(6)
-                    .into_iter()
-                    .map(|i| {
-                        let label = if i.title.is_empty() { i.preview.clone() } else { i.title.clone() };
-                        (i.id.clone(), label.chars().take(42).collect::<String>())
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+        let view = self.view.read().map(|v| (v.watching, v.recent.clone())).unwrap_or((true, vec![]));
+        let (watching, recents) = view;
 
         let mut items: Vec<MenuItem<Self>> = vec![
             MenuItem::Standard(StandardItem {
                 label: "Open ClipDeck".into(),
                 activate: Box::new(|t| {
-                    t.proxy.send_event(Command::Show).ok();
+                    t.events.send_event(AppEvent::Show).ok();
                 }),
                 ..Default::default()
             }),
             MenuItem::Standard(StandardItem {
                 label: "Settings…".into(),
                 activate: Box::new(|t| {
-                    t.proxy.send_event(Command::OpenSettings).ok();
+                    t.events.send_event(AppEvent::OpenSettings).ok();
                 }),
                 ..Default::default()
             }),
@@ -112,12 +68,7 @@ impl Tray for ClipTray {
             MenuItem::Standard(StandardItem {
                 label: if watching { "Pause watching" } else { "Resume watching" }.into(),
                 activate: Box::new(|t| {
-                    if let Ok(mut st) = t.state.lock() {
-                        let on = !st.store.settings.watch_enabled;
-                        st.store.settings.watch_enabled = on;
-                        st.store.save();
-                    }
-                    t.proxy.send_event(Command::Refresh).ok();
+                    t.events.send_event(AppEvent::ToggleWatch).ok();
                 }),
                 ..Default::default()
             }),
@@ -129,10 +80,7 @@ impl Tray for ClipTray {
                 items.push(MenuItem::Standard(StandardItem {
                     label,
                     activate: Box::new(move |t| {
-                        if let Ok(mut st) = t.state.lock() {
-                            st.copy_item(&id);
-                        }
-                        crate::sounds::play("copy");
+                        t.events.send_event(AppEvent::Copy { id: id.clone(), purpose: WritePurpose::TrayCopy }).ok();
                     }),
                     ..Default::default()
                 }));
@@ -143,7 +91,7 @@ impl Tray for ClipTray {
         items.push(MenuItem::Standard(StandardItem {
             label: "Quit".into(),
             activate: Box::new(|t| {
-                    t.proxy.send_event(Command::Quit).ok();
+                    t.events.send_event(AppEvent::Quit).ok();
                 }),
             ..Default::default()
         }));
@@ -151,12 +99,39 @@ impl Tray for ClipTray {
     }
 }
 
-/// Spawn the tray when a session bus exists; silently skip otherwise (e.g. a
-/// headless session) so the daemon still runs.
-pub fn spawn(state: Arc<Mutex<AppState>>, proxy: EventLoopProxy<Command>) {
+/// Update the tray's read-only mirror after state changes (main thread only).
+pub fn refresh_view(view: &Arc<RwLock<TrayView>>, watching: bool, items: &[ClipItem]) {
+    if let Ok(mut v) = view.write() {
+        v.watching = watching;
+        v.recent = items
+            .iter()
+            .take(6)
+            .map(|i| {
+                let label = if i.title.is_empty() { i.preview.clone() } else { i.title.clone() };
+                (i.id.clone(), label.chars().take(42).collect::<String>())
+            })
+            .collect();
+    }
+}
+
+/// Spawn the tray when a session bus exists; silently skip otherwise.
+pub fn spawn(view: Arc<RwLock<TrayView>>, events: EventLoopProxy<AppEvent>) {
     if std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_none() {
         return;
     }
-    let service = ksni::TrayService::new(ClipTray { state, proxy });
-    service.spawn();
+    ksni::TrayService::new(ClipTray { view, events }).spawn();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tray_pixels_match_supplied_png_in_argb_network_order() {
+        let (width, height, rgba) = crate::worker::decode_png(include_bytes!("../assets/icon_tray.png")).unwrap();
+        let icon = tray_icon();
+        assert_eq!((icon.width, icon.height), (width as i32, height as i32));
+        let expected: Vec<u8> = rgba.chunks_exact(4).flat_map(|p| [p[3], p[0], p[1], p[2]]).collect();
+        assert!(icon.data == expected, "tray still uses substitute pixels or incorrect byte order");
+    }
 }

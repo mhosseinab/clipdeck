@@ -1,0 +1,4 @@
+interface:
+  display_name: "ClipDeck Checks"
+  short_description: "Run scoped native and fixture checks"
+  default_prompt: "Use $clipdeck-checks for this ClipDeck task."

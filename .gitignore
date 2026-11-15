@@ -1,12 +1,6 @@
 # Rust
 target/
 
-# Swift / Xcode
-.build/
-DerivedData/
-*.xcodeproj/project.xcworkspace/xcuserdata/
-*.xcuserstate
-
 # misc
 *.log
 .DS_Store
