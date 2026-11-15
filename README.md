@@ -3,6 +3,8 @@
 A native **Linux clipboard manager**, written in Rust. Search clipboard history,
 organize clips into pinboards, pin favorites, and copy from a compact overlay.
 
+![ClipDeck showing notes, a Rust snippet, a link, and an image in clipboard history](assets/screenshots/clipdeck-history.png)
+
 ## Install
 
 For Ubuntu 24.04 or newer on x86_64, download the Debian package from
