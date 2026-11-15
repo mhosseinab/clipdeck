@@ -35,7 +35,7 @@ section = "utils"
 priority = "optional"
 extended-description = "ClipDeck is a fast, native clipboard manager with a searchable\nhistory, pinboards, paste stack, privacy rules and a quick-paste overlay.\nRuns in the background with a tray icon. GNOME Wayland shortcuts require\nconfiguration in system Keyboard Settings."
 depends = "$auto, libx11-6, libx11-xcb1, libxcb1, libxrandr2, libxi6, libxcursor1, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libwayland-cursor0, libwayland-egl1"
-recommends = "gnome-control-center"
+recommends = "gnome-control-center, libsecret-tools"
 assets = [
     ["target/release/clipdeck", "usr/bin/", "755"],
     ["assets/io.github.mhosseinab.clipdeck.desktop", "usr/share/applications/", "644"],

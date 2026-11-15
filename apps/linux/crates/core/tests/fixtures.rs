@@ -176,20 +176,32 @@ fn store_rules_fixture() {
             let ids: Vec<String> = order
                 .iter()
                 .filter_map(|content| {
-                    store.items.iter().find(|i| &i.content == content).map(|i| i.id.clone())
+                    store
+                        .all_items()
+                        .iter()
+                        .find(|i| &i.content == content)
+                        .map(|i| i.id.clone())
                 })
                 .collect();
             store.reorder(&ids);
         }
         if let Some(expected) = c.expected.contents.as_ref() {
-            let got: Vec<String> = store.items.iter().map(|i| i.content.clone()).collect();
+            let got: Vec<String> = store
+                .all_items()
+                .iter()
+                .map(|i| i.content.clone())
+                .collect();
             assert_eq!(&got, expected, "case {} contents", c.id);
         }
         if let Some(count) = c.expected.count {
-            assert_eq!(store.items.len(), count, "case {} count", c.id);
+            assert_eq!(store.len(), count, "case {} count", c.id);
         }
         if let Some(sc) = c.expected.stacked_count {
-            let got = store.items.iter().filter(|i| i.stack_order.is_some()).count();
+            let got = store
+                .all_items()
+                .iter()
+                .filter(|i| i.stack_order.is_some())
+                .count();
             assert_eq!(got, sc, "case {} stacked", c.id);
         }
     }
@@ -202,24 +214,46 @@ fn store_import_fixture() {
         let dir = tmpdir("import");
         let mut store = Store::open(&dir);
         for (n, local) in c.local.iter().enumerate() {
-            let mut item = make_item(n, &Add {
-                content: local["content"].as_str().unwrap().into(),
-                item_type: local["type"].as_str().map(String::from),
-                pinned: None,
-                pinboard_id: None,
-                stack_order: None,
-            });
+            let mut item = make_item(
+                n,
+                &Add {
+                    content: local["content"].as_str().unwrap().into(),
+                    item_type: local["type"].as_str().map(String::from),
+                    pinned: None,
+                    pinboard_id: None,
+                    stack_order: None,
+                },
+            );
             if let Some(id) = local.get("id").and_then(|v| v.as_str()) {
                 item.id = id.into();
             }
             store.add_item(item);
         }
         let counts = store.import_json(&serde_json::json!({"items": c.import_items}).to_string());
-        assert_eq!(counts.imported, c.expected.imported.unwrap(), "case {} imported", c.id);
-        assert_eq!(counts.skipped, c.expected.skipped.unwrap(), "case {} skipped", c.id);
-        assert_eq!(store.items.len(), c.expected.count.unwrap(), "case {} count", c.id);
+        assert_eq!(
+            counts.imported,
+            c.expected.imported.unwrap(),
+            "case {} imported",
+            c.id
+        );
+        assert_eq!(
+            counts.skipped,
+            c.expected.skipped.unwrap(),
+            "case {} skipped",
+            c.id
+        );
+        assert_eq!(
+            store.len(),
+            c.expected.count.unwrap(),
+            "case {} count",
+            c.id
+        );
         if let Some(sc) = c.expected.stacked_count {
-            let got = store.items.iter().filter(|i| i.stack_order.is_some()).count();
+            let got = store
+                .all_items()
+                .iter()
+                .filter(|i| i.stack_order.is_some())
+                .count();
             assert_eq!(got, sc, "case {} stacked", c.id);
         }
     }
@@ -260,13 +294,16 @@ fn sync_merge_fixture() {
         let shared = dir.join("shared");
         let mut store = Store::open(&dir.join("a"));
         for (n, local) in c.local.iter().enumerate() {
-            let mut item = make_item(n, &Add {
-                content: local["content"].as_str().unwrap().into(),
-                item_type: local["type"].as_str().map(String::from),
-                pinned: None,
-                pinboard_id: None,
-                stack_order: None,
-            });
+            let mut item = make_item(
+                n,
+                &Add {
+                    content: local["content"].as_str().unwrap().into(),
+                    item_type: local["type"].as_str().map(String::from),
+                    pinned: None,
+                    pinboard_id: None,
+                    stack_order: None,
+                },
+            );
             item.id = local["id"].as_str().unwrap().into();
             item.created_at = local["createdAt"].as_i64().unwrap_or(n as i64);
             store.add_item(item);
@@ -282,21 +319,44 @@ fn sync_merge_fixture() {
         std::fs::write(&file, lines).unwrap();
         let counts = sync.merge(&mut store);
         if let Some(true) = c.merge_twice {
-            assert_eq!(counts.imported, c.expected.first_imported.unwrap(), "{} first", c.id);
+            assert_eq!(
+                counts.imported,
+                c.expected.first_imported.unwrap(),
+                "{} first",
+                c.id
+            );
             let second = sync.merge(&mut store);
-            assert_eq!(second.imported, c.expected.second_imported.unwrap(), "{} second", c.id);
+            assert_eq!(
+                second.imported,
+                c.expected.second_imported.unwrap(),
+                "{} second",
+                c.id
+            );
         } else {
-            assert_eq!(counts.imported, c.expected.imported.unwrap(), "{} imported", c.id);
+            assert_eq!(
+                counts.imported,
+                c.expected.imported.unwrap(),
+                "{} imported",
+                c.id
+            );
         }
         if let Some(sk) = c.expected.skipped {
             assert_eq!(counts.skipped, sk, "{} skipped", c.id);
         }
         if let Some(expected) = c.expected.contents.as_ref() {
-            let got: Vec<String> = store.items.iter().map(|i| i.content.clone()).collect();
+            let got: Vec<String> = store
+                .all_items()
+                .iter()
+                .map(|i| i.content.clone())
+                .collect();
             assert_eq!(&got, expected, "{} contents", c.id);
         }
         if let Some(sc) = c.expected.stacked_count {
-            let got = store.items.iter().filter(|i| i.stack_order.is_some()).count();
+            let got = store
+                .all_items()
+                .iter()
+                .filter(|i| i.stack_order.is_some())
+                .count();
             assert_eq!(got, sc, "{} stacked", c.id);
         }
     }
@@ -417,7 +477,12 @@ fn autostart_fixture() {
             let file = autostart_file(&home);
             match &c.expected_file {
                 Some(exp) => {
-                    assert_eq!(std::fs::read_to_string(&file).unwrap(), exp.content, "case {}", c.id);
+                    assert_eq!(
+                        std::fs::read_to_string(&file).unwrap(),
+                        exp.content,
+                        "case {}",
+                        c.id
+                    );
                 }
                 None => assert!(!file.exists(), "case {} should remove entry", c.id),
             }

@@ -41,9 +41,16 @@ impl SyncStore {
     /// Append a newly captured item (post-dedupe).
     pub fn append(&self, item: &ClipItem) {
         let Some(file) = &self.file else { return };
-        let row = serde_json::json!({ "v": 1, "item": item });
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(file) {
-            let _ = writeln!(f, "{row}");
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(file)
+        {
+            let _ = (|| -> std::io::Result<()> {
+                f.write_all(b"{\"v\":1,\"item\":")?;
+                serde_json::to_writer(&mut f, item)?;
+                f.write_all(b"}\n")
+            })();
         }
     }
 
@@ -51,26 +58,39 @@ impl SyncStore {
     /// consumed; a trailing partial line is left for the next merge.
     pub fn merge(&mut self, store: &mut Store) -> MergeCounts {
         let mut counts = MergeCounts::default();
-        let Some(file) = &self.file else { return counts };
-        let Ok(meta) = std::fs::metadata(file) else { return counts };
+        let Some(file) = &self.file else {
+            return counts;
+        };
+        let Ok(meta) = std::fs::metadata(file) else {
+            return counts;
+        };
         if meta.len() <= self.last_size {
             return counts;
         }
-        let Ok(all) = std::fs::read(file) else { return counts };
-        let new_bytes = &all[self.last_size as usize..];
-        let consumed_to = new_bytes.iter().rposition(|&b| b == b'\n').map(|p| p + 1).unwrap_or(0);
-        if consumed_to == 0 {
+        use std::io::{BufRead, Seek, SeekFrom};
+        let Ok(mut input) = std::fs::File::open(file) else {
+            return counts;
+        };
+        if input.seek(SeekFrom::Start(self.last_size)).is_err() {
             return counts;
         }
-        self.last_size += consumed_to as u64;
-
-        let chunk = String::from_utf8_lossy(&new_bytes[..consumed_to]);
+        let mut input = std::io::BufReader::new(input);
+        let mut line = Vec::new();
         let mut imported = false;
-        for line in chunk.lines() {
-            if line.trim().is_empty() {
+        loop {
+            line.clear();
+            let Ok(bytes) = input.read_until(b'\n', &mut line) else {
+                break;
+            };
+            if bytes == 0 || !line.ends_with(b"\n") {
+                break;
+            }
+            self.last_size += bytes as u64;
+            let text = String::from_utf8_lossy(&line);
+            if text.trim().is_empty() {
                 continue;
             }
-            let Ok(row) = serde_json::from_str::<serde_json::Value>(line) else {
+            let Ok(row) = serde_json::from_str::<serde_json::Value>(&text) else {
                 counts.skipped += 1;
                 continue;
             };
@@ -82,14 +102,14 @@ impl SyncStore {
                 counts.skipped += 1;
                 continue;
             };
-            let key = item.dedupe_key();
-            if store.items.iter().any(|i| i.dedupe_key() == key || i.id == item.id) {
+            if store.contains_content(item.item_type, &item.content) || store.contains_id(&item.id)
+            {
                 counts.skipped += 1;
                 continue;
             }
             let mut item = item;
             item.stack_order = None;
-            store.items.push(item);
+            store.insert_imported(item);
             counts.imported += 1;
             imported = true;
         }

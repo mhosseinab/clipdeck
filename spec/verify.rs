@@ -465,6 +465,62 @@ fn label(group: &str, case: &Value, check: &str) -> String {
     format!("{group}/{}: {check}", display_field(case, "id"))
 }
 
+fn validate_storage_policy(policy: &Value, checks: &mut Checks) -> Result<()> {
+    checks.check(policy["nativeFile"] == json!("clipdeck.sqlite3"), "storage-policy: native SQLite file");
+    checks.check(policy["loadLegacyNativeFile"] == json!(false), "storage-policy: legacy native JSON is ignored");
+    let integer = |value: &Value, key: &str| value[key].as_u64().ok_or_else(|| format!("storage-policy: expected unsigned {key}"));
+    let page_size = integer(policy, "pageSize")?;
+    for case in array(policy, "cases")? {
+        let count = integer(case, "itemCount")?;
+        let offset = integer(case, "offset")?;
+        let limit = integer(case, "requestedLimit")?.min(page_size);
+        let length = count.saturating_sub(offset).min(limit);
+        checks.equal(json!(length), &case["expected"]["count"], label("storage-policy", case, "page count"));
+        checks.equal(if length == 0 { Value::Null } else { json!(offset) },
+            &case["expected"]["firstIndex"], label("storage-policy", case, "first index"));
+        checks.equal(if length == 0 { Value::Null } else { json!(offset + length - 1) },
+            &case["expected"]["lastIndex"], label("storage-policy", case, "last index"));
+    }
+    for case in array(policy, "summaryCases")? {
+        let length = string(case, "text")?.chars().count() as u64 * integer(case, "repeat")?;
+        for (limit, expected) in [("contentSummaryChars", "contentChars"), ("titleSummaryChars", "titleChars"), ("previewSummaryChars", "previewChars")] {
+            checks.equal(json!(length.min(integer(policy, limit)?)), &case["expected"][expected],
+                label("storage-policy", case, expected));
+        }
+    }
+    Ok(())
+}
+
+fn validate_encryption_policy(policy: &Value, checks: &mut Checks) -> Result<()> {
+    for (field, expected) in [
+        ("firstChoiceRequired", json!(true)),
+        ("keyStorage", json!("os-keyring")),
+        ("plaintextFallbackOnKeyFailure", json!(false)),
+        ("nativeImages", json!({"storage":"external-files","encryptedWithProfile":true})),
+        ("encryptedSyncAllowed", json!(false)),
+        ("exportEncrypted", json!(false)),
+    ] {
+        checks.equal(policy[field].clone(), &expected, format!("encryption-policy: {field}"));
+    }
+    for case in array(policy, "cases")? {
+        let configured = case["configured"].as_bool().ok_or("encryption-policy: expected configured boolean")?;
+        let encrypted = case["encrypted"].as_bool().ok_or("encryption-policy: expected encrypted boolean")?;
+        let action = if !configured {
+            "prompt"
+        } else if !encrypted {
+            "open-plaintext"
+        } else if string(case, "keyStatus")? == "available" {
+            "open-encrypted"
+        } else {
+            "error"
+        };
+        checks.equal(json!(action), &case["expected"]["action"], label("encryption-policy", case, "action"));
+        checks.equal(json!(matches!(action, "open-plaintext" | "open-encrypted")),
+            &case["expected"]["mayStartWatching"], label("encryption-policy", case, "watching gate"));
+    }
+    Ok(())
+}
+
 fn validate(root: &Path) -> Result<Checks> {
     let mut checks = Checks::default();
     let mut fixtures = BTreeMap::new();
@@ -512,6 +568,8 @@ fn validate(root: &Path) -> Result<Checks> {
             .get(name)
             .ok_or_else(|| format!("missing fixture {name}"))
     };
+    validate_storage_policy(fixture("storage-policy")?, &mut checks)?;
+    validate_encryption_policy(fixture("encryption-policy")?, &mut checks)?;
     for case in array(fixture("classify-text")?, "cases")? {
         checks.equal(
             json!(classify(string(case, "raw")?)),
@@ -686,6 +744,21 @@ fn validate(root: &Path) -> Result<Checks> {
         required_fields(&schema["$defs"]["settings"], &sample["settings"])?,
         "sample-store: settings required fields present",
     );
+    let export_schema = load_json(root, "schema/clipdeck-export.schema.json")?;
+    let export = load_json(root, "examples/sample-export.json")?;
+    checks.check(export["version"] == json!(1) && required_fields(&export_schema, &export)?,
+        "sample-export: version and envelope fields");
+    for item in array(&export, "items")? {
+        checks.check(required_fields(&schema["$defs"]["clipItem"], item)?,
+            format!("sample-export: item {} required fields", display_field(item, "id")));
+    }
+    for board in array(&export, "pinboards")? {
+        checks.check(required_fields(&schema["$defs"]["pinboard"], board)?,
+            format!("sample-export: board {} required fields", display_field(board, "id")));
+    }
+    let security_schema = load_json(root, "schema/profile-security.schema.json")?;
+    let security = load_json(root, "examples/sample-profile-security.json")?;
+    checks.check(required_fields(&security_schema, &security)?, "sample-profile-security: required mode fields");
     let schema = load_json(root, "schema/sync-line.schema.json")?;
     let path = root.join("examples/sample-sync.jsonl");
     let lines =
@@ -884,7 +957,7 @@ mod tests {
         )
         .unwrap();
         let checks = validate(&tree.0).unwrap();
-        assert_eq!(checks.count, 202);
+        assert_eq!(checks.count, 244);
         assert_eq!(checks.failures, 1);
     }
 
@@ -898,9 +971,23 @@ mod tests {
     }
 
     #[test]
+    fn encryption_policy_requires_explicit_choice_and_no_key_fallback() {
+        let policy = load_json(Path::new(env!("CARGO_MANIFEST_DIR")), "fixtures/encryption-policy.json").unwrap();
+        assert_eq!(policy["keyStorage"], json!("os-keyring"));
+        assert_eq!(policy["plaintextFallbackOnKeyFailure"], json!(false));
+    }
+
+    #[test]
+    fn sqlite_storage_policy_fixture_is_present() {
+        let policy = load_json(Path::new(env!("CARGO_MANIFEST_DIR")), "fixtures/storage-policy.json").unwrap();
+        assert_eq!(policy["nativeFile"], json!("clipdeck.sqlite3"));
+        assert_eq!(policy["loadLegacyNativeFile"], json!(false));
+    }
+
+    #[test]
     fn repository_fixture_tree_retains_all_checks() {
         let result = validate(Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
-        assert_eq!(result.count, 202);
+        assert_eq!(result.count, 244);
         assert_eq!(result.failures, 0);
     }
 }

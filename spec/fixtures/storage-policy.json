@@ -1,0 +1,50 @@
+{
+  "fixture": "storage-policy",
+  "specRef": "spec/behavior.md#5-store-format",
+  "description": "Native SQLite identity, bounded display pages and scalar-safe summary limits. Full item payloads remain unchanged.",
+  "nativeFile": "clipdeck.sqlite3",
+  "legacyNativeFile": "clipdeck-store.json",
+  "loadLegacyNativeFile": false,
+  "pageSize": 64,
+  "contentSummaryChars": 4096,
+  "titleSummaryChars": 256,
+  "previewSummaryChars": 512,
+  "sqliteCacheKiB": 2048,
+  "cases": [
+    {
+      "id": "page-beyond-old-three-hundred-limit",
+      "itemCount": 305,
+      "offset": 300,
+      "requestedLimit": 64,
+      "expected": { "count": 5, "firstIndex": 300, "lastIndex": 304 }
+    },
+    {
+      "id": "oversized-page-request-is-bounded",
+      "itemCount": 100,
+      "offset": 0,
+      "requestedLimit": 1000,
+      "expected": { "count": 64, "firstIndex": 0, "lastIndex": 63 }
+    },
+    {
+      "id": "page-after-end-is-empty",
+      "itemCount": 3,
+      "offset": 3,
+      "requestedLimit": 64,
+      "expected": { "count": 0, "firstIndex": null, "lastIndex": null }
+    }
+  ],
+  "summaryCases": [
+    {
+      "id": "unicode-summaries-end-on-scalar-boundaries",
+      "text": "🙂漢",
+      "repeat": 3000,
+      "expected": { "contentChars": 4096, "titleChars": 256, "previewChars": 512 }
+    },
+    {
+      "id": "short-summaries-retain-all-text",
+      "text": "hello",
+      "repeat": 1,
+      "expected": { "contentChars": 5, "titleChars": 5, "previewChars": 5 }
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "profile-security.schema.json",
+  "title": "ClipDeck profile security marker",
+  "$comment": "No encryption key material is stored here. The OS keyring identity uses the canonical profile root, not data_dir. This marker refers to an initialized storage directory and database; it is not a bootstrap seed.",
+  "type": "object",
+  "required": [
+    "configured",
+    "encrypted",
+    "pending",
+    "data_dir"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "configured": {
+      "type": "boolean"
+    },
+    "encrypted": {
+      "type": "boolean"
+    },
+    "pending": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "data_dir": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+    }
+  }
+}

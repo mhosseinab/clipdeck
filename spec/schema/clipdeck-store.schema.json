@@ -1,7 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "clipdeck-store.schema.json",
-  "title": "ClipDeck store file (clipdeck-store.json)",
+  "title": "ClipDeck JSON interchange snapshot",
+  "$comment": "Shared JSON item/settings definitions. Native storage is clipdeck.sqlite3; this snapshot is not loaded automatically.",
   "type": "object",
   "required": ["items", "pinboards", "settings"],
   "additionalProperties": true,

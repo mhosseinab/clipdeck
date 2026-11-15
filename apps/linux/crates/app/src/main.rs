@@ -5,8 +5,10 @@
 mod draw;
 mod events;
 mod hotkey;
+mod page_loader;
 mod presentation;
 mod sounds;
+mod security;
 mod state;
 mod tray;
 mod ui;
@@ -58,26 +60,33 @@ fn main() {
             }
         }
         Some("export") => {
-            let app = AppState::open(&user_data());
-            let path = args.get(1).cloned().unwrap_or_else(|| "clipdeck-export.json".into());
-            std::fs::write(&path, app.store.export_json()).ok();
+            let path = args.get(1).map(String::as_str).unwrap_or("clipdeck-export.json");
+            let data = user_data();
+            let _profile_lock = lock_profile(&data).unwrap_or_else(|error| {
+                eprintln!("cannot export while the profile is in use; quit ClipDeck first: {error}");
+                std::process::exit(1);
+            });
+            if let Err(error) = export_profile(&data, Path::new(path)) {
+                eprintln!("cannot export ClipDeck history: {error}");
+                std::process::exit(1);
+            }
             println!("exported to {path}");
         }
         Some("import") => {
-            let data = user_data();
-            let _profile_lock = match lock_profile(&data) {
-                Ok(lock) => lock,
-                Err(error) => {
-                    eprintln!("cannot import while the profile is in use; quit ClipDeck first: {error}");
-                    std::process::exit(1);
-                }
+            let Some(path) = args.get(1) else {
+                eprintln!("usage: clipdeck import <file>");
+                std::process::exit(1);
             };
-            let mut app = AppState::open(&data);
-            if let Some(path) = args.get(1) {
-                if let Ok(raw) = std::fs::read_to_string(path) {
-                    let counts = app.store.import_json(&raw);
-                    app.save();
-                    println!("imported {}, skipped {}", counts.imported, counts.skipped);
+            let data = user_data();
+            let _profile_lock = lock_profile(&data).unwrap_or_else(|error| {
+                eprintln!("cannot import while the profile is in use; quit ClipDeck first: {error}");
+                std::process::exit(1);
+            });
+            match import_profile(&data, Path::new(path)) {
+                Ok(counts) => println!("imported {}, skipped {}", counts.imported, counts.skipped),
+                Err(error) => {
+                    eprintln!("cannot import ClipDeck history: {error}");
+                    std::process::exit(1);
                 }
             }
         }
@@ -88,6 +97,69 @@ fn main() {
             print_help();
         }
     }
+}
+
+fn export_profile(data: &Path, path: &Path) -> Result<(), String> {
+    let destination = export_destination(data, path).map_err(|error| error.to_string())?;
+    let app = AppState::try_open(data)?;
+    write_export_atomically(&destination, |output| app.store.export_to_writer(output))
+        .map_err(|error| format!("{}: {error}", path.display()))
+}
+
+fn export_destination(profile: &Path, path: &Path) -> std::io::Result<PathBuf> {
+    let invalid = || std::io::Error::new(std::io::ErrorKind::InvalidInput,
+        "export destination must not replace ClipDeck profile data or use a linked file");
+    let profile = profile.canonicalize()?;
+    let name = path.file_name().ok_or_else(invalid)?;
+    let parent = path.parent().filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new(".")).canonicalize()?;
+    let destination = parent.join(name);
+    if let Ok(relative) = destination.strip_prefix(&profile) {
+        let first = relative.components().next().ok_or_else(invalid)?;
+        let first = first.as_os_str().to_string_lossy();
+        if matches!(first.as_ref(), "store" | ".ipc" | "images" | "instance.lock"
+            | "clipdeck-security.json" | "clipdeck-store.json" | ".clipdeck-storage")
+            || first.starts_with("store-") || first.starts_with("clipdeck.sqlite3")
+            || first.starts_with(".security-") || first.starts_with(".export-") {
+            return Err(invalid());
+        }
+    }
+    match std::fs::symlink_metadata(&destination) {
+        Ok(metadata) if !metadata.is_file() || metadata.nlink() != 1 => return Err(invalid()),
+        Ok(_) => {},
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+        Err(error) => return Err(error),
+    }
+    Ok(destination)
+}
+
+fn write_export_atomically(
+    destination: &Path,
+    write: impl FnOnce(&mut std::io::BufWriter<std::fs::File>) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    let parent = destination.parent().expect("validated export parent");
+    let temporary = parent.join(format!(".export-{}.tmp", clipdeck_core::store::uuid_v4ish()));
+    let file = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600)
+        .open(&temporary)?;
+    let result = (|| {
+        let mut output = std::io::BufWriter::new(file);
+        write(&mut output)?;
+        output.flush()?;
+        output.get_ref().sync_all()?;
+        std::fs::rename(&temporary, destination)?;
+        std::fs::File::open(parent)?.sync_all()
+    })();
+    let _ = std::fs::remove_file(temporary);
+    result
+}
+
+fn import_profile(data: &Path, path: &Path) -> Result<clipdeck_core::ImportCounts, String> {
+    let file = std::fs::File::open(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let mut app = AppState::try_open(data)?;
+    let counts = app.store.import_from_reader(std::io::BufReader::new(file))
+        .map_err(|error| error.to_string())?;
+    app.save();
+    Ok(counts)
 }
 
 fn print_help() {
@@ -239,9 +311,22 @@ fn spawn_control_server(listener: UnixListener, events: winit::event_loop::Event
 
 /* ---------- daemon ---------- */
 
+fn lock_daemon_profile(data: &Path) -> std::io::Result<std::fs::File> {
+    let restarting = std::env::var_os("CLIPDECK_ENCRYPTION_RESTART").is_some();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        match lock_profile(data) {
+            Err(error) if restarting && error.kind() == std::io::ErrorKind::WouldBlock && std::time::Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            result => return result,
+        }
+    }
+}
+
 fn run_daemon() {
     let data = user_data();
-    let _profile_lock = match lock_profile(&data) {
+    let _profile_lock = match lock_daemon_profile(&data) {
         Ok(lock) => lock,
         Err(error) => {
             eprintln!("ClipDeck profile is already in use or unavailable: {error}");
@@ -258,7 +343,10 @@ fn run_daemon() {
         eprintln!("cannot bind ClipDeck control socket {}: {error} (Unix socket paths must fit the platform limit)", socket.display());
         std::process::exit(1);
     });
-    let app = AppState::open(&data);
+    let app = AppState::try_open_for_daemon(&data).unwrap_or_else(|error| {
+        eprintln!("{error}");
+        std::process::exit(1);
+    });
 
     // Launch-at-login per spec §11 (re-applied at startup of the daemon).
     if app.settings().launch_at_login {
@@ -282,18 +370,21 @@ fn run_daemon() {
     spawn_control_server(listener, events.clone());
 
     let (worker_tx, worker_rx) = channel();
-    worker::spawn(events.clone(), worker_rx, app.store.image_dir.clone(), app.settings().watch_enabled);
+    worker::spawn(events.clone(), worker_rx, app.settings().watch_enabled && app.privacy.configured);
 
     let (accel_tx, accel_rx) = channel();
     let initial_accel = app.settings().shortcut.clone();
     hotkey::spawn(events.clone(), accel_rx, initial_accel);
 
     let tray_view = Arc::new(RwLock::new(tray::TrayView {
-        watching: app.settings().watch_enabled,
+        watching: app.settings().watch_enabled && app.privacy.configured,
         recent: vec![],
     }));
     tray::spawn(tray_view.clone(), events.clone());
 
+    if std::env::var_os("CLIPDECK_ENCRYPTION_RESTART").is_some() {
+        let _ = events.send_event(AppEvent::Show);
+    }
     if let Err(e) = ui::run(app, events, worker_tx, accel_tx, tray_view, event_loop) {
         eprintln!("ui error: {e}");
     }
@@ -313,6 +404,65 @@ fn prefer_x11(force: Option<bool>, wayland: bool, display: bool, desktop: &str) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn export_rejects_native_profile_paths_without_changing_them() {
+        let profile = std::env::temp_dir().join(format!("clipdeck-export-{}", clipdeck_core::store::uuid_v4ish()));
+        let _lock = lock_profile(&profile).unwrap();
+        export_profile(&profile, &profile.join("export.json")).unwrap();
+        let policy = profile.join("clipdeck-security.json");
+        let before = std::fs::read(&policy).unwrap();
+        assert!(export_profile(&profile, &policy).is_err());
+        assert_eq!(std::fs::read(&policy).unwrap(), before);
+        std::fs::remove_dir_all(profile).unwrap();
+    }
+
+    #[test]
+    fn export_paths_resolve_aliases_and_protect_all_reserved_locations() {
+        let profile = std::env::temp_dir().join(format!("clipdeck-export-paths-{}", clipdeck_core::store::uuid_v4ish()));
+        let _lock = lock_profile(&profile).unwrap();
+        for directory in ["store", "store-old", ".ipc", "images", "ordinary"] {
+            std::fs::create_dir(profile.join(directory)).unwrap();
+        }
+        for path in ["store/clipdeck.sqlite3", "store-old/export.json", ".ipc/control.sock",
+            "instance.lock", "clipdeck-security.json", "clipdeck.sqlite3-wal", "images/new.png",
+            "clipdeck-store.json", ".security-test.tmp", ".clipdeck-storage"] {
+            assert!(export_destination(&profile, &profile.join(path)).is_err(), "{path}");
+        }
+        let alias = profile.join("alias");
+        std::os::unix::fs::symlink(profile.join("store"), &alias).unwrap();
+        assert!(export_destination(&profile, &alias.join("new.json")).is_err());
+        let link = profile.join("linked.json");
+        std::os::unix::fs::symlink(profile.join("instance.lock"), &link).unwrap();
+        assert!(export_destination(&profile, &link).is_err());
+        let hardlink = profile.join("hardlinked.json");
+        std::fs::hard_link(profile.join("instance.lock"), &hardlink).unwrap();
+        assert!(export_destination(&profile, &hardlink).is_err());
+        assert!(export_destination(&profile, &profile).is_err());
+        assert!(export_destination(&profile, &profile.join("export.json")).is_ok());
+        assert!(export_destination(&profile, &profile.join("ordinary/export.json")).is_ok());
+        std::fs::remove_dir_all(profile).unwrap();
+    }
+
+    #[test]
+    fn export_atomic_write_preserves_existing_output_on_error_and_sets_private_mode() {
+        let directory = std::env::temp_dir().join(format!("clipdeck-export-atomic-{}", clipdeck_core::store::uuid_v4ish()));
+        std::fs::create_dir(&directory).unwrap();
+        let destination = directory.join("export.json");
+        std::fs::write(&destination, b"previous export").unwrap();
+        let result = write_export_atomically(&destination, |output| {
+            output.write_all(b"partial plaintext")?;
+            Err(std::io::Error::other("serialization failed"))
+        });
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(&destination).unwrap(), b"previous export");
+        assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 1);
+        write_export_atomically(&destination, |output| output.write_all(b"complete export")).unwrap();
+        assert_eq!(std::fs::read(&destination).unwrap(), b"complete export");
+        assert_eq!(destination.metadata().unwrap().mode() & 0o777, 0o600);
+        assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 1);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn profile_directory_respects_xdg_and_explicit_override() {

@@ -18,7 +18,7 @@ commercial clipboard manager; no code or assets of that product are used.
 | --- | --- | --- |
 | `id` | string | Unique per store. UUIDv4 recommended. |
 | `type` | enum | `text`, `link`, `code`, `color`, `image`, `file`, `html` |
-| `content` | string | Full payload. For `image`: the stored image file name. For `file`: newline-separated absolute paths. |
+| `content` | string | Full payload. For `image`: the stored image key. For `file`: newline-separated absolute paths. |
 | `preview` | string | One-line derived summary (§4). |
 | `title` | string | Derived short title (§4). |
 | `sourceApp` | string \| null | Frontmost app name at capture time. |
@@ -77,8 +77,10 @@ truth). Unknown settings keys read from disk MUST be preserved on write
 1. **Files**: if file paths are advertised on the clipboard, produce one
    `file` item whose `content` is the newline-joined absolute paths.
 2. **Image**: if an image payload exists and decodes non-empty, produce one
-   `image` item; store the encoded PNG under the store's image directory as
-   `<sha256-hex-of-png>.png`; `content` = that file name.
+   `image` item; store the encoded PNG as an external image file identified by
+   `<sha256-hex-of-png>.png`; `content` and `imageFile` use that key. Image bytes
+   MUST NOT be stored as SQLite BLOBs. In an encrypted profile, the external
+   file uses authenticated encryption and MUST NOT contain a plaintext PNG.
 3. **Text**: read plain text `raw` and rich text `html` (if any). Let
    `body = raw` if non-empty, else `html` with tags stripped and whitespace
    collapsed. If `body.trim()` is empty, produce nothing.
@@ -150,9 +152,47 @@ Multi-line handling: "first line" = content up to the first `\n`.
 
 ## 5. Store format
 
-Single JSON object, file name `clipdeck-store.json`, atomically replaced
-(write temp + rename) with a 150 ms trailing debounce. Schema:
-`schema/clipdeck-store.schema.json`. Example: `examples/sample-store.json`.
+Native storage is `clipdeck.sqlite3` in the profile's active storage directory. Settings,
+pinboards and full clip payloads are persisted in SQLite transactions. Captures,
+edits and metadata changes update the affected records; showing, searching or
+scrolling the overlay MUST NOT serialize or rewrite the full history.
+
+An existing `clipdeck-store.json` is ignored, including its settings. It is not
+automatically migrated or imported. The explicit data reset applies only to
+that legacy JSON history. Existing SQLite history and its images are preserved:
+a root-level `clipdeck.sqlite3` is adopted into an active storage directory
+without importing, reordering or discarding its records.
+
+On the first new-store daemon boot, recognized legacy JSON and unused legacy
+image files are removed only after active SQLite data has been preserved;
+unrelated files and user exports remain untouched. A genuinely empty profile
+starts with the defaults in `fixtures/settings-defaults.json`. Missing security
+policy for an existing marked storage directory, a missing active database, or
+an unreadable or invalid SQLite database is an error. None permits creation of
+an empty replacement store.
+
+JSON is an interchange format only. `schema/clipdeck-export.schema.json` and
+`examples/sample-export.json` define the export envelope. The shared item,
+pinboard and settings JSON definitions remain in
+`schema/clipdeck-store.schema.json`; `examples/sample-store.json` illustrates
+those definitions and is not a native profile seed.
+
+Display queries return at most 64 item summaries, each containing at most
+4096 content scalars, 256 title scalars and 512 preview scalars. These are raw
+prefixes on Unicode scalar boundaries; full stored payloads are unchanged and
+are fetched for copying, editing, hooks or export. List browsing MUST reach
+items beyond the first 300 results without retaining the whole history in RAM.
+Matching remains case-insensitive Unicode substring matching over title,
+preview and full content, using Rust lowercase semantics.
+
+Each database connection uses a suggested 2048 KiB page cache, no memory
+mapping and memory-backed temporary storage so SQLite cannot spill plaintext
+row data to a temporary database. Queries and bulk mutations operate on bounded
+metadata batches without materializing all matching IDs or clip bodies. This is a database cache budget, not
+a bound on total process memory or the selected clip's full payload. The
+vectors in `fixtures/storage-policy.json` define display-page boundaries and
+summary limits. The UI applies background query results only when they match
+the current request, filter and store generation.
 
 ### 5.1 List order
 
@@ -172,17 +212,78 @@ kept     = filter items in original list order, retaining all keep items
 - Protection affects retention only: pinned, board and stack entries MUST NOT
   move ahead of newer captures. Dedupe refresh still moves its entry to the front.
 - `|keep|` may exceed `maxItems`; then no overflow item survives.
-- Dropped `image` items have their image files deleted (best effort).
+- An image file is deleted after no remaining clip references its key.
 
 ### 5.3 Import / export
 
 - **Export**: JSON `{version: 1, exportedAt: <ISO-8601>, items, pinboards}`.
+  Bulk export streams complete records in list order; display summaries MUST
+  NOT replace original item contents. Import/export processing MUST NOT build
+  an in-memory copy of the entire document or history.
 - **Import**: for each incoming item, skip when the dedupe key (§2.4) is
   present locally OR its `id` already exists locally (implementations MUST
   count skips). Malformed entries (missing `id`,
   non-string `content`) are skipped and counted. Imported items keep their
   `createdAt`; `stackOrder` is reset to `null`. Pinboards merge by `id`.
   Return `{imported, skipped}`.
+
+### 5.4 Encryption choice
+
+The first interactive launch requires an explicit choice before clipboard
+watching starts: enable database encryption or continue without encryption.
+Default `watchEnabled` does not bypass this gate. Plaintext mode needs no
+keyring; encrypted mode uses SQLCipher and an independently generated key
+persisted only in the OS keyring through Secret Service. Keys MUST NOT appear in profile
+configuration, application logs, exports or command-line arguments.
+
+`clipdeck-security.json` contains `configured` and `encrypted` booleans, a
+nullable `pending` desired-mode boolean, and a `data_dir` storage-directory
+basename. It contains no key material and has owner-only permissions.
+`data_dir` must be one safe basename, such as `store` or `store-<unique-id>`;
+absolute paths, traversal and nested paths are invalid. The active directory
+contains the database and an `images/` directory.
+Its JSON shape is defined by `schema/profile-security.schema.json`; a plaintext
+example is in `examples/sample-profile-security.json`. The example assumes its
+active database has already been initialized; a mode file alone cannot create
+or replace that database.
+
+Enabling or disabling encryption in Settings prepares the required OS keyring
+key, records the pending mode, and requires a restart. Conversion runs with
+exclusive profile ownership and all old database connections closed. It builds
+a new storage directory: SQLCipher exports the database in the selected mode
+and image files are converted one at a time. After validation and filesystem
+sync, an atomic marker update switches both mode and directory. Only then may
+the old directory be removed. Failure preserves the old marker, data and the
+key needed to reopen them. Enabling encryption does not produce a plaintext
+intermediate. Disabling it deliberately creates a plaintext target.
+
+Secret Service stores a 32-byte OS-random key encoded as hexadecimal, associated
+with application `io.github.mhosseinab.clipdeck` and the SHA-256 of the canonical
+profile path. Moving an encrypted profile to a different canonical path does
+not transfer its keyring identity automatically.
+
+Encrypted image files use XChaCha20-Poly1305 with an HKDF-SHA256 image key
+derived from the profile master key using context
+`io.github.mhosseinab.clipdeck/image-file/v1`. Their format is ASCII
+`CLIPDECKIMAGE` followed by version byte `0x01` (14 bytes combined), a 24-byte
+random nonce, ciphertext and a
+16-byte authentication tag. The marker and stable image basename are
+authenticated additional data. Authentication failure, the wrong key or a
+renamed file is an error; only authenticated plaintext may be decoded or
+copied. Filenames and file sizes remain visible.
+
+A missing, locked or unavailable keyring/key for an encrypted profile MUST
+stop opening and watching with an actionable error. It MUST NOT trigger a new
+empty store, unencrypted fallback or automatic key replacement. Conversion
+preserves the current SQLite history, list order, pinboards, pins, stack and
+settings; the explicit legacy JSON reset does not authorize loss of new data.
+
+Encryption covers native database contents and external image files at rest.
+The system clipboard and user-requested JSON exports remain plaintext. JSONL
+folder sync is disabled while encrypted mode is active. Encryption does not
+retroactively protect old exports or files and does not promise forensic
+erasure of an old plaintext database or deleted file. Storage policy vectors
+are in `fixtures/encryption-policy.json`.
 
 ---
 
@@ -315,4 +416,9 @@ closing, `Ctrl+S` stack, `Del` remove with confirmation, `Esc` returns from Sett
 to sidebar boards. Removing from a board preserves History unless the user
 opts into deleting from History. Each card has a pin/unpin control. No synthetic
 input is used. External drag-out and manual card reordering are not implemented.
-Preview rendering shows at most 600 scalars of text/code.
+The strip loads bounded pages of summaries around the visible position.
+Thumbnail pixels use an 8 MiB LRU budget with at most 256 entries, including
+failed loads. Cache validity follows the image key, target size and file
+revision, not unrelated store changes. Thumbnail decoding skips PNG data over
+32 MiB, images over 16 MiPixels, and filenames over 255 bytes. These limits
+affect previews only; the original image remains available to copy.

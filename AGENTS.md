@@ -37,7 +37,7 @@ original.
 - `spec/behavior.md`: behavior contract; fixtures take precedence when
   prose and fixture expectations disagree. Report the disagreement.
 - `spec/fixtures/`, `spec/schema/`, `spec/examples/`: parity vectors and formats.
-- `spec/verify.rs`: independent Rust reference oracle (202 checks). Run it
+- `spec/verify.rs`: independent Rust reference oracle (244 checks). Run it
   with `bash scripts/check.sh spec`; it does not import the application core.
 - `apps/linux/crates/core/`: platform-independent behavior + fixture tests
   (`cargo test -p clipdeck-core`).
@@ -57,9 +57,13 @@ original.
 
 ## Linux architecture invariants
 
-- `AppState` (state.rs) is owned by the main thread; mutations are named
-  methods returning `Effects` bundles; `run_effects` is the only place side
-  effects (clipboard writes, hooks, sounds, hide) happen.
+- `AppState` (state.rs) and the SQLite writer are owned by the main thread;
+  mutations are named methods committing small Store transactions and returning
+  `Effects` bundles. `run_effects` executes desktop effects (clipboard writes,
+  hooks, sounds, hide). Full history bodies are never retained in AppState.
+  A separate reader connection performs bounded page queries; results return
+  through `AppEvent` and only `Ui::apply` installs current results. Reject stale
+  request/filter/generation results and bound pending query work.
 - Rendering: winit 0.30 + tiny-skia + fontdue. `presentation.rs` uses ARGB8888
   Wayland SHM via smithay-client-toolkit; X11 retains softbuffer. Softbuffer 0.4's
   Wayland XRGB buffers cannot transmit transparent corners, which is why this
@@ -70,8 +74,24 @@ original.
   registered hit wins. Keep full-card hits before icon hits; reject empty hit
   regions. Cards render into bounded local pixmaps and are composited through
   a strip viewport mask; translate and clip their hit regions to the same bounds.
-  `ThumbnailCache` retains scaled decoded PNGs (including failed loads) per
-  image filename and target size, and invalidates on AppState generation changes.
+  `ThumbnailCache` is an 8 MiB pixel LRU with at most 256 entries, including
+  failed loads. Keys include image key and target size; image file revisions
+  invalidate an entry rather than unrelated AppState generation changes.
+  Preview decoding rejects source PNGs over 32 MiB or 16 MiPixels and filenames
+  over 255 bytes. Copying still uses the full original image.
+  SQLite queries return at most 64 summaries with bounded content/title/preview
+  prefixes (4096/256/512 Unicode scalars); copy and edit fetch full payloads.
+- Native images remain external files, never SQLite BLOBs; encrypted capture
+  must never leave plaintext PNGs. SQLCipher keys live only in
+  Secret Service for persistence, never in `clipdeck-security.json`, logs or CLI arguments.
+  First-launch mode choice gates watching. Settings changes require restart
+  and exclusive validated conversion, preserving all current SQLite data and
+  images. The owner-only marker selects one safe active storage basename;
+  conversion validates a new directory before atomically switching that marker.
+  Missing/locked keys fail closed; never silently reset or fall back to
+  plaintext. All connections use memory-backed SQLite temporary storage;
+  avoid materializing full clip bodies in sorting or membership subqueries.
+  JSON exports remain plaintext and JSONL sync is disabled while encrypted.
 - Wayland window visibility: winit 0.30.13 set_visible is a no-op. Hide must
   drop the presenter before the window; Show recreates both through
   ensure_window on ActiveEventLoop. Start with no window, ignore events for old
@@ -94,10 +114,23 @@ original.
   stages a display-only drag preview during
   rendering. These modes are honored only with CLIPDECK_DUMP_UI and must be
   unset for manual live QA so real pointer movement is not overridden.
-  Seed isolated stores with ALL settings from `spec/fixtures/settings-defaults.json`
-  before overriding watchEnabled=false, launchAtLogin=false, hooks=[], and
-  syncDirectory="". Missing settings keys use defaults; provide explicit safe
-  settings in QA profiles so watching and autostart are never enabled by omission.
+  Native data lives in `<data_dir>/clipdeck.sqlite3`; old `clipdeck-store.json`
+  files are ignored, including old settings. Only legacy JSON history may be
+  reset; current SQLite rows and images must be preserved. Missing policy for
+  an existing generation or a missing active database must fail closed.
+  For isolated plaintext QA, create a fresh owner-only profile and initialize
+  its database and policy with
+  `CLIPDECK_USER_DATA=/tmp/profile clipdeck export /tmp/profile/export.json`
+  before starting a daemon. Do not write a policy that points to an absent
+  database. Read the generated `clipdeck-security.json`, preserve its `data_dir`
+  and set `configured=true`, `encrypted=false`, `pending=null`, writing it with
+  mode 0600. In `<data_dir>/clipdeck.sqlite3`, set the `meta` row `key='settings'`
+  to a complete JSON object from `spec/fixtures/settings-defaults.json` using Python sqlite3,
+  overriding watchEnabled=false, launchAtLogin=false, hooks=[], and
+  syncDirectory="". `meta.value` holds that JSON text. Import synthetic sample
+  records through CLI `import` only after those safe settings are committed.
+  Do not seed legacy JSON and assume it configures the SQLite profile. Missing
+  settings keys use defaults, so watch/autostart must never be enabled by omission.
 - Deb: cargo-deb; asset paths resolve from the package dir; `LICENSE` must
   exist at both `apps/linux/LICENSE` and `apps/linux/crates/app/LICENSE`.
 

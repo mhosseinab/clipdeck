@@ -8,7 +8,6 @@ use clipdeck_core::ClipItem;
 use arboard::Clipboard;
 use clipdeck_core::{classify, derive_pair, ItemType};
 use sha2::{Digest, Sha256};
-use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
 use winit::event_loop::EventLoopProxy;
@@ -19,35 +18,35 @@ const IMAGE_RECHECK: Duration = Duration::from_secs(2);
 #[derive(Debug, Clone)]
 pub enum WorkerCmd {
     SetWatching(bool),
+    CaptureHandled,
     Write { payload: WritePayload, purpose: WritePurpose },
 }
 
 pub struct Worker {
     events: EventLoopProxy<AppEvent>,
     cmd_rx: Receiver<WorkerCmd>,
-    image_dir: PathBuf,
     clip: Option<Clipboard>,
     last_sig: String,
     last_image_hash: String,
     last_image_check: Instant,
     capture_policy: CapturePolicy,
+    capture_pending: bool,
 }
 
 pub fn spawn(
     events: EventLoopProxy<AppEvent>,
     cmd_rx: Receiver<WorkerCmd>,
-    image_dir: PathBuf,
     watching: bool,
 ) {
     let mut worker = Worker {
         events,
         cmd_rx,
-        image_dir,
         clip: None,
         last_sig: String::new(),
         last_image_hash: String::new(),
         last_image_check: Instant::now() - IMAGE_RECHECK,
         capture_policy: CapturePolicy::new(watching),
+        capture_pending: false,
     };
     std::thread::spawn(move || worker.run());
 }
@@ -64,6 +63,7 @@ impl Worker {
         loop {
             match self.cmd_rx.recv_timeout(Duration::from_millis(POLL_MS)) {
                 Ok(WorkerCmd::Write { payload, purpose }) => self.write(payload, purpose),
+                Ok(WorkerCmd::CaptureHandled) => self.capture_pending = false,
                 Ok(WorkerCmd::SetWatching(watching)) => {
                     self.capture_policy.set_watching(watching);
                     if watching {
@@ -96,6 +96,9 @@ impl Worker {
 
     /// §2 capture: 400 ms polling, signature change, files > image > text.
     fn poll(&mut self) {
+        // One captured payload at a time; completion is acknowledged by the
+        // main dispatcher after persistence/filtering, including paused clips.
+        if self.capture_pending { return; }
         // short, disjoint borrows of the clipboard; state updates happen after
         let text = {
             let Some(clip) = self.clipboard() else { return };
@@ -176,14 +179,11 @@ impl Worker {
                 image_file: None,
             }
         };
-        self.send_captured(item);
+        self.send_captured(item, None);
     }
 
     fn capture_image(&mut self, w: usize, h: usize, png: Vec<u8>) {
         let file = format!("{}.png", sha16(&png));
-        if std::fs::write(self.image_dir.join(&file), &png).is_err() {
-            return;
-        }
         let (title, preview) = derive_pair(ItemType::Image, &file, Some((w as u32, h as u32)));
         let item = ClipItem {
             id: clipdeck_core::store::uuid_v4ish(),
@@ -199,12 +199,12 @@ impl Worker {
             stack_order: None,
             image_file: Some(file),
         };
-        self.send_captured(item);
+        self.send_captured(item, Some(png));
     }
 
-    fn send_captured(&mut self, item: ClipItem) {
+    fn send_captured(&mut self, item: ClipItem, image: Option<Vec<u8>>) {
         let source_app = active_window_title();
-        self.events.send_event(AppEvent::Captured { item, source_app }).ok();
+        self.capture_pending = self.events.send_event(AppEvent::Captured { item, source_app, image }).is_ok();
     }
 }
 

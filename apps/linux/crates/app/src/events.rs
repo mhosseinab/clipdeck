@@ -24,11 +24,19 @@ pub enum WritePayload {
 
 #[derive(Debug, Clone)]
 pub enum AppEvent {
+    /// Immutable result from the bounded read-only page worker.
+    PageLoaded { token: u64, page: Result<clipdeck_core::ItemPage, String> },
+
     /* producers -> main */
     /// Clipboard worker captured a change (raw; main applies skip rules).
-    Captured { item: ClipItem, source_app: Option<String> },
+    Captured { item: ClipItem, source_app: Option<String>, image: Option<Vec<u8>> },
     /// Clipboard worker finished a write.
     Written { purpose: WritePurpose },
+
+    /// Request an explicit at-rest encryption choice/change.
+    ConfigureEncryption { enabled: bool },
+    /// System keyring preparation completed outside the UI thread.
+    EncryptionPrepared { enabled: bool, result: Result<(), String> },
 
     /* window / lifecycle */
     Show,

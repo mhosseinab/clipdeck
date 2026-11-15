@@ -1,0 +1,76 @@
+{
+  "fixture": "encryption-policy",
+  "specRef": "spec/behavior.md#54-encryption-choice",
+  "description": "Encryption is an explicit profile choice. Missing or inaccessible encryption keys never cause plaintext fallback or a fresh store.",
+  "firstChoiceRequired": true,
+  "keyStorage": "os-keyring",
+  "plaintextFallbackOnKeyFailure": false,
+  "nativeImages": {
+    "storage": "external-files",
+    "encryptedWithProfile": true
+  },
+  "encryptedSyncAllowed": false,
+  "exportEncrypted": false,
+  "cases": [
+    {
+      "id": "first-launch-waits-for-choice",
+      "configured": false,
+      "encrypted": false,
+      "keyStatus": "missing",
+      "expected": {
+        "action": "prompt",
+        "mayStartWatching": false
+      }
+    },
+    {
+      "id": "explicit-plaintext-does-not-require-keyring",
+      "configured": true,
+      "encrypted": false,
+      "keyStatus": "unavailable",
+      "expected": {
+        "action": "open-plaintext",
+        "mayStartWatching": true
+      }
+    },
+    {
+      "id": "encrypted-profile-with-key-opens",
+      "configured": true,
+      "encrypted": true,
+      "keyStatus": "available",
+      "expected": {
+        "action": "open-encrypted",
+        "mayStartWatching": true
+      }
+    },
+    {
+      "id": "locked-keyring-fails-closed",
+      "configured": true,
+      "encrypted": true,
+      "keyStatus": "locked",
+      "expected": {
+        "action": "error",
+        "mayStartWatching": false
+      }
+    },
+    {
+      "id": "missing-key-fails-closed",
+      "configured": true,
+      "encrypted": true,
+      "keyStatus": "missing",
+      "expected": {
+        "action": "error",
+        "mayStartWatching": false
+      }
+    },
+    {
+      "id": "unavailable-keyring-fails-closed",
+      "configured": true,
+      "encrypted": true,
+      "keyStatus": "unavailable",
+      "expected": {
+        "action": "error",
+        "mayStartWatching": false
+      }
+    }
+  ]
+}

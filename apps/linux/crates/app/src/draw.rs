@@ -353,32 +353,140 @@ pub fn scale_box(src: &Pixmap, tw: u32, th: u32) -> Option<Pixmap> {
     Some(out)
 }
 
-/// Cache display-sized decoded images, including failed loads, until store changes.
-#[derive(Default)]
+/// Display-sized thumbnails with an LRU byte budget and bounded failed entries.
 pub struct ThumbnailCache {
-    generation: Option<u64>,
-    images: std::collections::HashMap<(String, u32, u32), Option<Pixmap>>,
+    images: std::collections::HashMap<(String, u32, u32), CachedThumbnail>,
+    bytes: usize,
+    clock: u64,
+}
+
+struct CachedThumbnail {
+    fingerprint: Option<ThumbnailFingerprint>,
+    pixmap: Option<Pixmap>,
+    used: u64,
+}
+
+#[derive(PartialEq)]
+enum ThumbnailFingerprint {
+    #[cfg(test)]
+    File(u64, Option<std::time::SystemTime>),
+    Source(u64, u64),
+}
+
+const THUMBNAIL_BYTES: usize = 8 * 1024 * 1024;
+const THUMBNAIL_ENTRIES: usize = 256;
+const MAX_PREVIEW_FILE_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_PREVIEW_PIXELS: u64 = 16 * 1024 * 1024;
+
+impl Default for ThumbnailCache {
+    fn default() -> Self {
+        Self { images: std::collections::HashMap::new(), bytes: 0, clock: 0 }
+    }
 }
 
 impl ThumbnailCache {
-    pub fn get(&mut self, directory: &std::path::Path, name: &str, width: u32, height: u32, generation: u64) -> Option<&Pixmap> {
-        if self.generation != Some(generation) {
-            self.images.clear();
-            self.generation = Some(generation);
+    fn remove(&mut self, key: &(String, u32, u32)) {
+        if let Some(entry) = self.images.remove(key) {
+            self.bytes -= entry.pixmap.as_ref().map_or(0, |image| image.data().len());
         }
+    }
+
+    #[cfg(test)]
+    pub fn get(&mut self, directory: &std::path::Path, name: &str, width: u32, height: u32, _generation: u64) -> Option<&Pixmap> {
+        let path = directory.join(name);
+        let metadata = std::fs::metadata(&path).ok();
+        let length = metadata.as_ref().map(|meta| meta.len());
+        let fingerprint = metadata.map(|meta| ThumbnailFingerprint::File(meta.len(), meta.modified().ok()));
+        self.lookup(name, width, height, length, fingerprint, || std::fs::read(path).ok())
+    }
+
+    pub fn get_image<F: FnOnce() -> Option<Vec<u8>>>(&mut self, name: &str, width: u32, height: u32,
+        info: Option<(u64, u64)>, load: F) -> Option<&Pixmap> {
+        let fingerprint = info.map(|(length, revision)| ThumbnailFingerprint::Source(length, revision));
+        self.lookup(name, width, height, info.map(|(length, _)| length), fingerprint, load)
+    }
+
+    fn lookup<F: FnOnce() -> Option<Vec<u8>>>(&mut self, name: &str, width: u32, height: u32,
+        length: Option<u64>, fingerprint: Option<ThumbnailFingerprint>, load: F) -> Option<&Pixmap> {
+        if name.len() > 255 || name.is_empty() || name.contains('/') || matches!(name, "." | "..") { return None; }
         let key = (name.to_owned(), width, height);
-        self.images.entry(key).or_insert_with(|| {
-            let bytes = std::fs::read(directory.join(name)).ok()?;
-            let decoded = Pixmap::decode_png(&bytes).ok()?;
-            let (w, h) = fit_within(decoded.width() as f32, decoded.height() as f32, width as f32, height as f32);
-            scale_box(&decoded, w.round() as u32, h.round() as u32)
-        }).as_ref()
+        self.clock = self.clock.wrapping_add(1);
+        if self.images.get(&key).is_some_and(|entry| entry.fingerprint != fingerprint) {
+            self.remove(&key);
+        }
+        if !self.images.contains_key(&key) {
+            let pixmap = (|| {
+                if length? > MAX_PREVIEW_FILE_BYTES { return None; }
+                if u64::from(width) * u64::from(height) * 4 > THUMBNAIL_BYTES as u64 { return None; }
+                let bytes = load()?;
+                if bytes.len() as u64 > MAX_PREVIEW_FILE_BYTES { return None; }
+                let reader = png::Decoder::new(std::io::Cursor::new(&bytes)).read_info().ok()?;
+                if u64::from(reader.info().width) * u64::from(reader.info().height) > MAX_PREVIEW_PIXELS { return None; }
+                drop(reader);
+                let decoded = Pixmap::decode_png(&bytes).ok()?;
+                let (w, h) = fit_within(decoded.width() as f32, decoded.height() as f32, width as f32, height as f32);
+                scale_box(&decoded, w.round() as u32, h.round() as u32)
+            })();
+            let bytes = pixmap.as_ref().map_or(0, |image| image.data().len());
+            while self.images.len() >= THUMBNAIL_ENTRIES || self.bytes + bytes > THUMBNAIL_BYTES {
+                let Some(oldest) = self.images.iter().min_by_key(|(_, entry)| entry.used).map(|(key, _)| key.clone()) else { break };
+                self.remove(&oldest);
+            }
+            self.bytes += bytes;
+            self.images.insert(key.clone(), CachedThumbnail { fingerprint, pixmap, used: self.clock });
+        }
+        let entry = self.images.get_mut(&key).expect("inserted thumbnail");
+        entry.used = self.clock;
+        entry.pixmap.as_ref()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn thumbnail_cache_bounds_failed_load_entries() {
+        let mut cache = ThumbnailCache::default();
+        for n in 0..300 {
+            assert!(cache.get(std::path::Path::new("/nonexistent-clipdeck-cache-test"), &format!("{n}.png"), 64, 64, 1).is_none());
+        }
+        assert!(cache.images.len() <= 256, "failed image loads grow without a bound");
+    }
+
+    #[test]
+    fn image_sources_fetch_only_on_a_cache_miss_or_revision_change() {
+        let mut cache = ThumbnailCache::default();
+        let calls = std::cell::Cell::new(0);
+        let bytes = include_bytes!("../assets/icon.png");
+        for _ in 0..3 {
+            assert!(cache.get_image("blob.png", 64, 64, Some((bytes.len() as u64, 1)), || {
+                calls.set(calls.get() + 1);
+                Some(bytes.to_vec())
+            }).is_some());
+        }
+        assert_eq!(calls.get(), 1);
+        cache.get_image("blob.png", 64, 64, Some((bytes.len() as u64, 2)), || {
+            calls.set(calls.get() + 1);
+            Some(bytes.to_vec())
+        });
+        assert_eq!(calls.get(), 2);
+    }
+
+    #[test]
+    fn thumbnail_cache_bounds_decoded_bytes() {
+        let dir = std::env::temp_dir().join(format!("clipdeck-cache-{}", clipdeck_core::store::uuid_v4ish()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut cache = ThumbnailCache::default();
+        for n in 0..80 {
+            let name = format!("{n}.png");
+            std::fs::write(dir.join(&name), include_bytes!("../assets/icon.png")).unwrap();
+            assert!(cache.get(&dir, &name, 200, 200, 1).is_some());
+        }
+        let bytes: usize = cache.images.values().filter_map(|entry| entry.pixmap.as_ref()).map(|pixmap| pixmap.data().len()).sum();
+        assert!(bytes <= 8 * 1024 * 1024, "decoded images exceed the cache byte budget: {bytes}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn keyboard_symbols_have_distinct_shapes_and_fixed_width() {

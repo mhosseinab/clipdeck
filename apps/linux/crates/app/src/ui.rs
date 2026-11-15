@@ -15,8 +15,9 @@ use crate::state::{AppState, Effects};
 use crate::presentation::Presenter;
 use crate::tray::{self, TrayView};
 use crate::worker::WorkerCmd;
-use clipdeck_core::{record_accel, ClipItem, KeyPress, Pinboard};
-use std::sync::mpsc::Sender;
+use clipdeck_core::{record_accel, ClipFilter, ClipItem, ItemPage, KeyPress, Pinboard, PAGE_SIZE};
+use crate::page_loader::{self, PageRequest};
+use std::sync::mpsc::{Sender, SyncSender, TrySendError};
 use std::sync::{Arc, RwLock};
 use tiny_skia::{Color, Pixmap};
 use winit::application::ApplicationHandler;
@@ -34,6 +35,7 @@ const KEYBOARD_HINTS: [(&str, &str); 9] = [("← | →", "Select"), ("↵", "Cop
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Hit {
+    ConfigureEncryption(bool),
     Select(usize),
     Delete(usize),
     Pin(usize),
@@ -107,8 +109,16 @@ impl DropFeedback {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PageKey { query: String, filter: ClipFilter, offset: usize, generation: u64 }
+
 pub struct Ui {
     app: AppState,
+    events: Option<EventLoopProxy<AppEvent>>,
+    privacy_prompt: bool,
+    privacy_busy: bool,
+    privacy_error: Option<String>,
+    privacy_target: Option<bool>,
     worker_tx: Sender<WorkerCmd>,
     accel_tx: Sender<String>,
     tray_view: Arc<RwLock<TrayView>>,
@@ -137,19 +147,30 @@ pub struct Ui {
     last_card_click: Option<(String, std::time::Instant, (f32, f32))>,
     hits: Vec<(f32, f32, f32, f32, Hit)>,
     items: Vec<ClipItem>,
+    page_offset: usize,
+    total_items: usize,
+    page_tx: Option<SyncSender<PageRequest>>,
+    page_key: Option<PageKey>,
+    page_token: u64,
+    page_inflight: Option<u64>,
+    pending_page: Option<PageRequest>,
+    page_error: Option<String>,
     pinboards: Vec<Pinboard>,
 }
 
 pub fn run(
     app: AppState,
-    _events: EventLoopProxy<AppEvent>,
+    events: EventLoopProxy<AppEvent>,
     worker_tx: Sender<WorkerCmd>,
     accel_tx: Sender<String>,
     tray_view: Arc<RwLock<TrayView>>,
     event_loop: EventLoop<AppEvent>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let privacy_prompt = !app.privacy.configured;
+    let page_tx = page_loader::spawn(app.store.path().to_path_buf(), app.store.encryption_key(), events.clone());
     let mut ui = Ui {
         app,
+        events: Some(events), privacy_prompt, privacy_busy: false, privacy_error: None, privacy_target: None,
         worker_tx,
         accel_tx,
         tray_view,
@@ -175,12 +196,14 @@ pub fn run(
             std::env::var("CLIPDECK_DUMP_SCROLL_X").ok().and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite() && *v >= 0.0).unwrap_or(0.0)
         } else { 0.0 },
         view_w: W,
-        visible: false,
+        visible: privacy_prompt,
         mods: ModifiersState::empty(),
         mouse: None,
         last_card_click: None,
         hits: Vec::new(),
         items: Vec::new(),
+        page_offset: 0, total_items: 0, page_tx: Some(page_tx), page_key: None, page_token: 0,
+        page_inflight: None, pending_page: None, page_error: None,
         pinboards: Vec::new(),
     };
     event_loop.run_app(&mut ui)?;
@@ -192,8 +215,54 @@ pub fn run(
 impl Ui {
     /// The single point of truth: every state mutation and side effect.
     fn apply(&mut self, event: AppEvent) {
+        if let AppEvent::PageLoaded { token, page } = event {
+            self.finish_page(token, page);
+            return;
+        }
         let effects = match event {
-            AppEvent::Captured { item, source_app } => self.app.record_captured(item, source_app),
+            AppEvent::PageLoaded { .. } => unreachable!("page replies handled before mutations"),
+            AppEvent::Captured { item, source_app, image } => {
+                let mut effects = self.app.record_captured_image(item, source_app, image);
+                effects.capture_completed = true;
+                effects
+            }
+            AppEvent::ConfigureEncryption { enabled } => {
+                if self.privacy_busy { return; }
+                self.privacy_error = None;
+                if !enabled && !self.app.privacy.configured {
+                    let mut effects = Effects::none();
+                    match crate::security::choose_plaintext(self.app.profile_path()) {
+                        Ok(config) => {
+                            self.app.privacy = config;
+                            self.privacy_prompt = false;
+                            effects.watching = Some(self.app.settings().watch_enabled);
+                        }
+                        Err(error) => self.privacy_error = Some(error),
+                    }
+                    effects
+                } else if enabled == self.app.privacy.encrypted && self.app.privacy.configured {
+                    Effects::none()
+                } else {
+                    self.privacy_busy = true;
+                    self.privacy_target = Some(enabled);
+                    let mut effects = Effects::none();
+                    effects.configure_encryption = Some(enabled);
+                    effects
+                }
+            }
+            AppEvent::EncryptionPrepared { enabled, result } => {
+                if self.privacy_target != Some(enabled) { return; }
+                self.privacy_target = None;
+                let mut effects = Effects::none();
+                match result {
+                    Ok(()) => effects.restart_for_encryption = true,
+                    Err(error) => {
+                        self.privacy_busy = false;
+                        self.privacy_error = Some(error);
+                    }
+                }
+                effects
+            }
             AppEvent::Written { purpose } => {
                 // Clipboard completion never launches keyboard/input tools.
                 match purpose {
@@ -223,7 +292,7 @@ impl Ui {
             }
             AppEvent::OpenSettings => {
                 self.show_overlay();
-                self.settings = true;
+                self.settings = !self.privacy_prompt;
                 self.dialog = None;
                 Effects::none()
             }
@@ -300,8 +369,28 @@ impl Ui {
 
     /// Execute one Effects bundle: the only place side effects happen.
     fn run_effects(&mut self, fx: Effects) {
+        if fx.capture_completed { self.worker_tx.send(WorkerCmd::CaptureHandled).ok(); }
         if let Some(watching) = fx.watching {
-            self.worker_tx.send(WorkerCmd::SetWatching(watching)).ok();
+            self.worker_tx.send(WorkerCmd::SetWatching(watching && self.app.privacy.configured)).ok();
+        }
+        if let Some(enabled) = fx.configure_encryption {
+            if let Some(events) = self.events.as_ref() {
+                crate::security::prepare_change(self.app.profile_path().to_path_buf(), enabled, events.clone());
+            } else {
+                self.privacy_busy = false;
+                self.privacy_target = None;
+                self.privacy_error = Some("Encryption setup requires the running application".into());
+            }
+        }
+        if fx.restart_for_encryption {
+            self.app.save();
+            match crate::security::restart(self.app.profile_path()) {
+                Ok(()) => std::process::exit(0),
+                Err(error) => {
+                    self.privacy_busy = false;
+                    self.privacy_error = Some(format!("Could not restart ClipDeck: {error}"));
+                }
+            }
         }
         if fx.open_keyboard_settings {
             match keyboard_settings_command().spawn() {
@@ -333,13 +422,104 @@ impl Ui {
 
     fn refresh(&mut self) {
         self.pinboards = self.app.store.pinboards.clone();
-        let pin_ids: Vec<String> = self.pinboards.iter().map(|p| p.id.clone()).collect();
-        self.items = self.app.items(&self.query, self.filter, &pin_ids);
-        if self.selected >= self.items.len() {
-            self.selected = 0;
+        let watching = self.app.settings().watch_enabled && self.app.privacy.configured;
+        tray::refresh_view(&self.tray_view, watching, &self.app.store.recent(6));
+        if self.privacy_prompt || (self.page_tx.is_some() && !self.visible) {
+            self.page_key = None;
+            return;
         }
-        let watching = self.app.settings().watch_enabled;
-        tray::refresh_view(&self.tray_view, watching, &self.app.store.items);
+        let filter = match self.filter {
+            1 => ClipFilter::Pinned,
+            n if n >= 2 => self.pinboards.get(n - 2).map(|board| ClipFilter::Board(board.id.clone())).unwrap_or(ClipFilter::All),
+            _ => ClipFilter::All,
+        };
+        // Clamp against known totals before deriving a page cursor, including
+        // large wheel deltas. Initial frame-dump offsets have no total yet.
+        if self.total_items > 0 {
+            let maximum = (self.total_items as f32 * 241.0 - (self.view_w - 210.0)).max(0.0);
+            self.scroll_x = self.scroll_x.min(maximum);
+        }
+        // Half-page strides leave a prefetched margin around page boundaries.
+        let first = (self.scroll_x / 241.0).max(0.0) as usize;
+        let offset = first / (PAGE_SIZE / 2) * (PAGE_SIZE / 2);
+        let key = PageKey { query: self.query.clone(), filter: filter.clone(), offset, generation: self.app.generation };
+        if self.page_tx.is_some() && self.page_key.as_ref() == Some(&key) { return; }
+        self.page_key = Some(key);
+        self.page_token = self.page_token.wrapping_add(1);
+        self.page_error = None;
+        if self.page_tx.is_some() {
+            self.items.clear();
+            self.hits.clear();
+        }
+        let request = PageRequest { token: self.page_token, query: self.query.clone(), filter, offset };
+        if self.page_tx.is_none() {
+            // Fixture UIs have no event loop. The same bounded query is applied
+            // synchronously so interaction tests exercise real persisted data.
+            let page = self.app.store.page(&request.query, &request.filter, request.offset, PAGE_SIZE);
+            self.finish_page(request.token, Ok(page));
+        } else if self.page_inflight.is_some() {
+            self.pending_page = Some(request);
+        } else {
+            self.send_page(request);
+        }
+    }
+
+    fn send_page(&mut self, request: PageRequest) {
+        let Some(tx) = &self.page_tx else { return };
+        let token = request.token;
+        match tx.try_send(request) {
+            Ok(()) => self.page_inflight = Some(token),
+            Err(TrySendError::Full(request)) => self.pending_page = Some(request),
+            Err(TrySendError::Disconnected(_)) => self.page_error = Some("Clipboard storage reader stopped".into()),
+        }
+    }
+
+    fn finish_page(&mut self, token: u64, page: Result<ItemPage, String>) {
+        if self.page_inflight == Some(token) { self.page_inflight = None; }
+        if token == self.page_token {
+            let mut changed_cards = self.page_tx.is_some();
+            match page {
+                Ok(page) => {
+                    changed_cards |= self.page_offset != page.offset || !self.items.iter().map(|item| &item.id).eq(page.items.iter().map(|item| &item.id));
+                    self.page_offset = page.offset;
+                    self.total_items = page.total;
+                    self.items = page.items;
+                    self.selected = self.selected.min(self.total_items.saturating_sub(1));
+                    if self.total_items == 0 {
+                        self.page_offset = 0;
+                        self.selected = 0;
+                        self.scroll_x = 0.0;
+                    } else if self.page_offset >= self.total_items {
+                        self.selected = self.total_items - 1;
+                        self.scroll_x = self.total_items as f32 * 241.0;
+                        self.page_key = None;
+                        self.refresh();
+                    } else if self.item_at(self.selected).is_none() && !self.items.is_empty() {
+                        let first_visible = (self.scroll_x / 241.0) as usize;
+                        self.selected = first_visible.clamp(self.page_offset, self.page_offset + self.items.len() - 1);
+                    }
+                    if self.visible && !self.settings { self.stage_dump_dialog(); }
+                }
+                Err(error) => self.page_error = Some(error),
+            }
+            if changed_cards { self.hits.clear(); }
+            self.request_redraw();
+        }
+        if self.page_inflight.is_none() {
+            if let Some(request) = self.pending_page.take() { self.send_page(request); }
+        }
+    }
+
+    fn item_at(&self, global_index: usize) -> Option<&ClipItem> {
+        self.items.get(global_index.checked_sub(self.page_offset)?)
+    }
+
+    fn begin_edit(&mut self, global_index: usize) {
+        let Some(id) = self.item_at(global_index).map(|item| item.id.clone()) else { return };
+        if let Some(item) = self.app.store.find(&id) {
+            self.editing = Some((item.id, item.content));
+            self.request_redraw();
+        }
     }
 
     fn show_overlay(&mut self) {
@@ -350,6 +530,10 @@ impl Ui {
         }
         self.visible = true;
         self.refresh();
+        self.stage_dump_dialog();
+    }
+
+    fn stage_dump_dialog(&mut self) {
         if std::env::var_os("CLIPDECK_DUMP_UI").is_some() && self.dialog.is_none() {
             self.dialog = match std::env::var("CLIPDECK_DUMP_BOARD_DIALOG").as_deref() {
                 Ok("rename") => self.pinboards.first().map(|board| Dialog::Rename {
@@ -491,6 +675,7 @@ impl ApplicationHandler<AppEvent> for Ui {
                     self.scroll_board_picker(dy, height);
                 } else {
                     self.scroll_x = (self.scroll_x - dy).max(0.0);
+                    self.refresh();
                 }
                 self.request_redraw();
             }
@@ -516,6 +701,7 @@ impl Ui {
             self.handle_key_action(KeyAction::Close);
             return;
         }
+        if self.privacy_prompt { return; }
         if self.settings && !self.capture { return; }
         if self.dialog.is_some() {
             self.handle_key_action(route_key(&ev.logical_key, ctrl, shift));
@@ -542,7 +728,7 @@ impl Ui {
                     self.request_redraw();
                 }
                 Key::Named(NamedKey::Enter) => {
-                    if let Some((id, content)) = self.editing.clone() {
+                    if let Some((id, content)) = self.editing.take() {
                         self.apply(AppEvent::SaveEdit { id, content });
                     }
                 }
@@ -569,6 +755,7 @@ impl Ui {
                 let text: String = text.chars().filter(|c| !c.is_control()).collect();
                 if !text.is_empty() {
                     self.query.push_str(&text);
+                    self.selected = 0; self.scroll_x = 0.0;
                     self.refresh();
                     self.request_redraw();
                 }
@@ -586,6 +773,7 @@ impl Ui {
     }
 
     fn handle_key_action(&mut self, action: KeyAction) {
+        if self.privacy_prompt && action != KeyAction::Close { return; }
         if self.settings && action != KeyAction::Close { return; }
         if self.dialog.is_some() && action != KeyAction::Close {
             self.handle_dialog_key(action);
@@ -603,44 +791,45 @@ impl Ui {
                 }
             },
             KeyAction::Next => {
-                self.selected = (self.selected + 1).min(self.items.len().saturating_sub(1));
+                self.selected = (self.selected + 1).min(self.total_items.saturating_sub(1));
                 self.scroll_selected_into_view();
+                self.refresh();
                 self.request_redraw();
             }
             KeyAction::Prev => {
                 self.selected = self.selected.saturating_sub(1);
                 self.scroll_selected_into_view();
+                self.refresh();
                 self.request_redraw();
             }
             KeyAction::Activate { plain } => {
-                if let Some(it) = self.items.get(self.selected) {
+                if let Some(it) = self.item_at(self.selected) {
                     self.apply(AppEvent::Activate { id: it.id.clone(), plain });
                 }
             }
             KeyAction::DeleteSelected => self.request_delete_clip(self.selected),
             KeyAction::CopySelected => {
-                if let Some(it) = self.items.get(self.selected) {
+                if let Some(it) = self.item_at(self.selected) {
                     self.apply(AppEvent::Copy { id: it.id.clone(), purpose: WritePurpose::Copy });
                 }
             }
             KeyAction::StackSelected => {
-                if let Some(it) = self.items.get(self.selected) {
+                if let Some(it) = self.item_at(self.selected) {
                     self.apply(AppEvent::StackPush { id: it.id.clone() });
                 }
             }
             KeyAction::EditSelected => {
-                if let Some(it) = self.items.get(self.selected) {
-                    self.editing = Some((it.id.clone(), it.content.clone()));
-                    self.request_redraw();
-                }
+                self.begin_edit(self.selected);
             }
             KeyAction::QueryPop => {
                 self.query.pop();
+                self.selected = 0; self.scroll_x = 0.0;
                 self.refresh();
                 self.request_redraw();
             }
             KeyAction::QueryPush(s) => {
                 self.query.push_str(&s);
+                self.selected = 0; self.scroll_x = 0.0;
                 self.refresh();
                 self.request_redraw();
             }
@@ -676,9 +865,9 @@ impl Ui {
         self.drag = None;
         if self.dialog.is_none() && self.editing.is_none() && !self.settings {
             if let Some(Hit::Select(i)) = self.hit_at(x, y) {
-                if let Some(item) = self.items.get(i) {
+                if let Some(id) = self.item_at(i).map(|item| item.id.clone()) {
                     self.selected = i;
-                    self.drag = Some(CardDrag { id: item.id.clone(), start: (x, y), active: false, board_id: None });
+                    self.drag = Some(CardDrag { id, start: (x, y), active: false, board_id: None });
                     self.request_redraw();
                     return;
                 }
@@ -717,9 +906,9 @@ impl Ui {
             self.last_card_click = None;
             if let Some((x, y)) = self.mouse {
                 if let Some(board_id) = self.sidebar_board_at(x, y) {
-                    let old_board = self.app.store.find(&drag.id).and_then(|item| item.pinboard_id.clone());
+                    let old_board = self.app.store.summary(&drag.id).and_then(|item| item.pinboard_id.clone());
                     self.apply(AppEvent::MoveToPinboard { id: drag.id.clone(), pinboard_id: Some(board_id.clone()) });
-                    if old_board.as_deref() != Some(board_id.as_str()) && self.app.store.find(&drag.id)
+                    if old_board.as_deref() != Some(board_id.as_str()) && self.app.store.summary(&drag.id)
                         .is_some_and(|item| item.pinboard_id.as_deref() == Some(board_id.as_str())) {
                         self.drop_feedback = Some(DropFeedback { board_id, started: std::time::Instant::now() });
                     }
@@ -733,7 +922,7 @@ impl Ui {
 
     fn select_card(&mut self, id: &str, x: f32, y: f32) {
         let Some(index) = self.items.iter().position(|item| item.id == id) else { return };
-        self.selected = index;
+        self.selected = self.page_offset + index;
         let now = std::time::Instant::now();
         let double_click = self.last_card_click.as_ref().is_some_and(|(previous, when, (px, py))| {
             previous == id && now.duration_since(*when) <= std::time::Duration::from_millis(400)
@@ -755,22 +944,20 @@ impl Ui {
             self.last_card_click = None;
         }
         match hit {
+            Hit::ConfigureEncryption(enabled) => self.apply(AppEvent::ConfigureEncryption { enabled }),
             Hit::Select(i) => {
-                if let Some(id) = self.items.get(i).map(|item| item.id.clone()) {
+                if let Some(id) = self.item_at(i).map(|item| item.id.clone()) {
                     self.select_card(&id, x, y);
                 }
             }
             Hit::Delete(i) => self.request_delete_clip(i),
             Hit::Pin(i) => {
-                if let Some(it) = self.items.get(i) {
+                if let Some(it) = self.item_at(i) {
                     self.apply(AppEvent::Pin { id: it.id.clone(), pinned: !it.pinned });
                 }
             }
             Hit::Edit(i) => {
-                if let Some(it) = self.items.get(i) {
-                    self.editing = Some((it.id.clone(), it.content.clone()));
-                    self.request_redraw();
-                }
+                self.begin_edit(i);
             }
             Hit::OpenKeyboardSettings => self.apply(AppEvent::OpenKeyboardSettings),
             Hit::CopyShortcutCommand => self.apply(AppEvent::CopyShortcutCommand),
@@ -787,13 +974,13 @@ impl Ui {
             Hit::StackPasteNext => self.apply(AppEvent::StackPop),
             Hit::StackClear => self.apply(AppEvent::StackClear),
             Hit::StackRemove(i) => {
-                let queued = self.app.store.stack_items();
+                let queued = self.app.store.stack_page(5);
                 if let Some(it) = queued.get(i) {
                     self.apply(AppEvent::StackUnstack { id: it.id.clone() });
                 }
             }
             Hit::SaveEdit => {
-                if let Some((id, content)) = self.editing.clone() {
+                if let Some((id, content)) = self.editing.take() {
                     self.apply(AppEvent::SaveEdit { id, content });
                 }
             }
@@ -813,9 +1000,9 @@ impl Ui {
                 }
             }
             Hit::MoveToBoard(i) => {
-                if let Some(item) = self.items.get(i) {
+                if let Some(id) = self.item_at(i).map(|item| item.id.clone()) {
                     self.selected = i;
-                    self.dialog = Some(Dialog::Move { item_id: item.id.clone(), scroll: 0 });
+                    self.dialog = Some(Dialog::Move { item_id: id, scroll: 0 });
                     self.editing = None;
                     self.request_redraw();
                 }
@@ -855,6 +1042,7 @@ impl Ui {
             Hit::SetFilter(n) => {
                 self.filter = n;
                 self.selected = 0;
+                self.scroll_x = 0.0;
                 self.refresh();
                 self.request_redraw();
             }
@@ -867,7 +1055,7 @@ impl Ui {
     }
 
     fn request_delete_clip(&mut self, index: usize) {
-        if let Some(item) = self.items.get(index) {
+        if let Some(item) = self.item_at(index) {
             let board_id = self.filter.checked_sub(2).and_then(|i| self.pinboards.get(i))
                 .filter(|board| item.pinboard_id.as_deref() == Some(board.id.as_str()))
                 .map(|board| board.id.clone());
@@ -884,7 +1072,7 @@ impl Ui {
         if let Some(Dialog::ConfirmDelete { target }) = self.dialog.take() {
             match target {
                 DeleteTarget::Clip { id, board_id: Some(board), delete_history: false, .. } => {
-                    if self.app.store.find(&id).is_some_and(|item| item.pinboard_id.as_deref() == Some(board.as_str())) {
+                    if self.app.store.summary(&id).is_some_and(|item| item.pinboard_id.as_deref() == Some(board.as_str())) {
                         self.apply(AppEvent::MoveToPinboard { id, pinboard_id: None });
                     }
                 }
@@ -984,7 +1172,11 @@ impl Ui {
         pm.fill(Color::from_rgba8(16, 18, 28, 255));
         round_rect(&mut pm, 6.0, 6.0, w as f32 - 12.0, h as f32 - 12.0, 18.0, rgba(16, 18, 28, 255));
         stroke_round(&mut pm, 6.0, 6.0, w as f32 - 12.0, h as f32 - 12.0, 18.0, rgba(255, 255, 255, 14), 1.0);
-        self.layout(&mut pm, w as f32, h as f32);
+        if self.privacy_prompt {
+            self.draw_privacy_prompt(&mut pm, w as f32, h as f32);
+        } else {
+            self.layout(&mut pm, w as f32, h as f32);
+        }
         if let Some(path) = rounded_path(6.0, 6.0, w as f32 - 12.0, h as f32 - 12.0, 18.0) {
             let mut mask = tiny_skia::Mask::new(w, h).expect("window mask");
             mask.fill_path(&path, tiny_skia::FillRule::Winding, true, tiny_skia::Transform::identity());
@@ -1050,7 +1242,7 @@ impl Ui {
         let dim = if self.query.is_empty() { 130 } else { 235 };
         f.text_l(pm, 212.0, 35.0, 13.0, &q, Face::Regular, rgba(238, 240, 246, dim));
 
-        let stacked = self.app.store.items.iter().filter(|i| i.stack_order.is_some()).count();
+        let stacked = self.app.store.stacked_count();
         if stacked > 0 {
             round_rect(pm, w - 306.0, 18.0, 92.0, 34.0, 17.0, rgba(143, 176, 255, 30));
             f.text_c(pm, w - 260.0, 35.0, 12.0, &format!("Stack x{stacked}"), Face::Medium, rgba(143, 176, 255, 235));
@@ -1065,20 +1257,21 @@ impl Ui {
 
         // cards strip
         let card_h = (h - 64.0 - 46.0).clamp(180.0, 252.0);
-        let total_w = self.items.len() as f32 * 241.0;
+        let total_w = self.total_items as f32 * 241.0;
         let visible_w = w - 210.0;
         let max_scroll = (total_w - visible_w).max(0.0);
-        if self.scroll_x > max_scroll {
+        if self.total_items > 0 && self.scroll_x > max_scroll {
             self.scroll_x = max_scroll;
         }
-        let mut x = 196.0 - self.scroll_x;
-        let cards = self.items.clone();
-        for (i, item) in cards.iter().enumerate() {
-            if x > w - 30.0 {
-                break;
-            }
+        let mut x = 196.0 + self.page_offset as f32 * 241.0 - self.scroll_x;
+        let first_visible = ((self.scroll_x / 241.0).floor() as usize).saturating_sub(self.page_offset);
+        let end = (first_visible + (visible_w / 241.0).ceil() as usize + 2).min(self.items.len());
+        x += first_visible as f32 * 241.0;
+        for local in first_visible..end {
+            if x > w - 30.0 { break; }
             if x + 228.0 > 196.0 {
-                self.draw_card(pm, x, 64.0, 228.0, card_h, i, item);
+                let item = self.items[local].clone();
+                self.draw_card(pm, x, 64.0, 228.0, card_h, self.page_offset + local, &item);
             }
             x += 241.0;
         }
@@ -1091,8 +1284,13 @@ impl Ui {
             }
         }
         if self.items.is_empty() {
-            f.text_c(pm, (w + 196.0) / 2.0, h / 2.0, 15.0, "Clipboard history is empty", Face::Medium, rgba(238, 240, 246, 200));
-            f.text_c(pm, (w + 196.0) / 2.0, h / 2.0 + 26.0, 12.0, "Copy anything \u{2014} it shows up here instantly.", Face::Regular, rgba(238, 240, 246, 130));
+            let message = self.page_error.as_deref().unwrap_or(if self.page_inflight.is_some() || self.pending_page.is_some() {
+                "Loading clipboard history..."
+            } else { "Clipboard history is empty" });
+            f.text_c(pm, (w + 196.0) / 2.0, h / 2.0, 15.0, message, Face::Medium, rgba(238, 240, 246, 200));
+            if self.page_error.is_none() && self.page_inflight.is_none() && self.pending_page.is_none() {
+                f.text_c(pm, (w + 196.0) / 2.0, h / 2.0 + 26.0, 12.0, "Copy anything \u{2014} it shows up here instantly.", Face::Regular, rgba(238, 240, 246, 130));
+            }
         }
         self.draw_keyboard_hints(pm, w, h);
 
@@ -1208,7 +1406,7 @@ impl Ui {
             }
             Dialog::Move { item_id, scroll } => {
                 f.text_l(pm, x + 20.0, y + 25.0, 15.0, "Move clip to board", Face::Medium, rgba(238, 240, 246, 240));
-                let current = self.app.store.find(&item_id).and_then(|item| item.pinboard_id.clone());
+                let current = self.app.store.summary(&item_id).and_then(|item| item.pinboard_id.clone());
                 let scroll = scroll.min((self.pinboards.len() + 1).saturating_sub(rows));
                 for (row, n) in (scroll..self.pinboards.len() + 1).take(rows).enumerate() {
                     let (name, selected) = if n == 0 {
@@ -1238,7 +1436,7 @@ impl Ui {
     fn draw_drag_preview(&mut self, pm: &mut Pixmap, w: f32, h: f32) {
         let Some(drag) = self.drag.clone().filter(|drag| drag.active) else { return };
         let Some((mx, my)) = self.mouse else { return };
-        let Some(item) = self.app.store.find(&drag.id).cloned() else { return };
+        let Some(item) = self.items.iter().find(|item| item.id == drag.id).cloned() else { return };
         let mut card = Pixmap::new(228, 252).expect("drag card");
         card.fill(Color::from_rgba8(16, 18, 28, 255));
         let first_hit = self.hits.len();
@@ -1326,8 +1524,9 @@ impl Ui {
             }
             clipdeck_core::ItemType::Image => {
                 if let Some(name) = &item.image_file {
-                    if let Some(image) = self.thumbnails.get(
-                        &self.app.store.image_dir, name, (w - 16.0) as u32, ph as u32, self.app.generation,
+                    let store = &self.app.store;
+                    if let Some(image) = self.thumbnails.get_image(
+                        name, (w - 16.0) as u32, ph as u32, store.image_info(name), || store.image_bytes(name),
                     ) {
                         let dx = x + 8.0 + ((w - 16.0) - image.width() as f32) / 2.0;
                         let dy = py + (ph - image.height() as f32) / 2.0;
@@ -1384,7 +1583,7 @@ impl Ui {
 
     fn draw_stack(&mut self, pm: &mut Pixmap, w: f32) {
         let f = self.fonts.clone();
-        let queued = self.app.store.stack_items();
+        let queued = self.app.store.stack_page(5);
         let x = w - 360.0;
         let y = 60.0;
         round_rect(pm, x, y, 330.0, 240.0, 14.0, rgba(22, 25, 38, 250));
@@ -1449,6 +1648,37 @@ impl Ui {
         self.hit(x, y, width, 26.0, Hit::Toggle(key));
     }
 
+    fn privacy_button(&mut self, pm: &mut Pixmap, x: f32, y: f32, width: f32, label: &str, enabled: bool) {
+        let color = if self.privacy_busy { rgba(255, 255, 255, 16) }
+            else if enabled { rgba(109, 149, 255, 235) } else { rgba(255, 255, 255, 28) };
+        round_rect(pm, x, y, width, 30.0, 7.0, color);
+        self.fonts.text_c(pm, x + width / 2.0, y + 15.0, 11.5, label, Face::Medium, rgba(245, 247, 252, 255));
+        if !self.privacy_busy { self.hit(x, y, width, 30.0, Hit::ConfigureEncryption(enabled)); }
+    }
+
+    fn draw_privacy_prompt(&mut self, pm: &mut Pixmap, w: f32, h: f32) {
+        let f = self.fonts.clone();
+        let width = 620.0;
+        let x = (w - width) / 2.0;
+        let y = ((h - 292.0) / 2.0).max(12.0);
+        round_rect(pm, x, y, width, 292.0, 14.0, rgba(28, 31, 45, 255));
+        f.text_l(pm, x + 26.0, y + 30.0, 18.0, "Protect clipboard history?", Face::Medium, rgba(245, 247, 252, 255));
+        icon_x(pm, x + width - 25.0, y + 27.0, 4.0, rgba(245, 247, 252, 210));
+        self.hit(x + width - 42.0, y + 10.0, 34.0, 34.0, Hit::CloseWindow);
+        f.wrap_lines(pm, x + 26.0, y + 58.0, width - 52.0, 13.0,
+            "Encrypt saved clips and images with a key kept in your system keyring.", Face::Regular, 2);
+        f.wrap_lines(pm, x + 26.0, y + 101.0, width - 52.0, 12.0,
+            "Encryption protects stored data. Clipboard transfers and exports remain unencrypted.", Face::Regular, 2);
+        f.text_l(pm, x + 26.0, y + 149.0, 11.5,
+            if self.privacy_busy { "Waiting for your system keyring..." } else { "Clipboard watching stays paused until you choose." },
+            Face::Regular, rgba(238, 240, 246, 190));
+        self.privacy_button(pm, x + 26.0, y + 174.0, 230.0, "Use encryption", true);
+        self.privacy_button(pm, x + 268.0, y + 174.0, 326.0, "Continue without encryption", false);
+        if let Some(error) = &self.privacy_error {
+            f.wrap_lines(pm, x + 26.0, y + 222.0, width - 52.0, 11.5, error, Face::Regular, 3);
+        }
+    }
+
     fn draw_settings(&mut self, pm: &mut Pixmap, w: f32, _h: f32) {
         let f = self.fonts.clone();
         let s = self.app.settings().clone();
@@ -1483,12 +1713,17 @@ impl Ui {
         self.draw_shortcut_setup(pm, right, 52.0);
         round_rect(pm, right, 248.0, 440.0, 104.0, 12.0, rgba(28, 31, 45, 255));
         f.text_l(pm, right + 18.0, 270.0, 13.0, "Privacy", Face::Medium, rgba(245, 247, 252, 255));
-        let privacy = if self.wayland_session {
-            "Sensitive content is not automatically excluded on Wayland. Pause watching when needed."
-        } else {
-            "Source-app filtering is best effort. Screen capture can include the overlay."
-        };
-        f.wrap_lines(pm, right + 18.0, 288.0, 404.0, 12.0, privacy, Face::Regular, 3);
+        let label = if self.privacy_busy { "Working..." }
+            else if self.app.privacy.encrypted { "Disable encryption" } else { "Enable encryption" };
+        self.privacy_button(pm, right + 264.0, 258.0, 158.0, label, !self.app.privacy.encrypted);
+        f.text_l(pm, right + 18.0, 294.0, 11.5,
+            if self.app.privacy.encrypted { "Saved history and images: encrypted" } else { "Saved history and images: unencrypted" },
+            Face::Regular, rgba(238, 240, 246, 225));
+        let privacy = if let Some(error) = self.privacy_error.as_deref() { error }
+            else if self.wayland_session { "Exports are unencrypted. Sensitive clips are not automatically excluded; pause watching when needed." }
+            else { "Exports are unencrypted. Source-app filtering is best effort; screen capture can include the overlay." };
+        f.wrap_lines(pm, right + 18.0, 306.0, 404.0, 10.5, privacy, Face::Regular, 3);
+
     }
 
 }
@@ -1621,6 +1856,167 @@ mod tests {
     }
 
     #[test]
+    fn paged_history_reaches_items_after_three_hundred() {
+        let (mut ui, worker) = fixture_ui_with_worker();
+        for n in 0..400 {
+            let mut item = fixture_item(clipdeck_core::ItemType::Text, &format!("clip {n}"));
+            item.id = format!("clip-{n}");
+            ui.app.store.add_item(item);
+        }
+        ui.refresh();
+        for _ in 0..350 { ui.handle_key_action(KeyAction::Next); }
+        assert_eq!(ui.selected, 350, "history stops at the old 300-item ceiling");
+        assert!(ui.items.len() <= 64, "UI retained more than one page");
+        ui.handle_key_action(KeyAction::CopySelected);
+        let WorkerCmd::Write { payload: crate::events::WritePayload::Text(content), .. } = worker.try_recv().unwrap() else { panic!("wrong clipboard payload") };
+        assert_eq!(content, "clip 49", "global selection copied the wrong page-relative clip");
+        for _ in 0..345 { ui.handle_key_action(KeyAction::Prev); }
+        assert_eq!(ui.selected, 5);
+        assert_eq!(ui.item_at(5).unwrap().content, "clip 394");
+    }
+
+    #[test]
+    fn editing_uses_the_full_clip_instead_of_a_card_excerpt() {
+        let mut ui = fixture_ui();
+        let content = format!("{} END", "λ".repeat(6000));
+        ui.app.store.add_item(fixture_item(clipdeck_core::ItemType::Text, &content));
+        ui.refresh();
+        assert!(ui.items[0].content.len() < content.len(), "card retained the full large clip");
+        ui.handle_key_action(KeyAction::EditSelected);
+        assert_eq!(ui.editing.as_ref().unwrap().1, content);
+    }
+
+    #[test]
+    fn first_launch_requires_an_explicit_storage_privacy_choice() {
+        let mut ui = fixture_ui();
+        ui.app.privacy.configured = false;
+        ui.privacy_prompt = true;
+        ui.refresh();
+        assert!(!ui.tray_view.read().unwrap().watching, "tray must show capture paused before the privacy choice");
+        ui.render_frame(W as u32, H as u32);
+        for choice in [true, false] {
+            assert!(ui.hits.iter().any(|(_,_,_,_,hit)| *hit == Hit::ConfigureEncryption(choice)));
+        }
+        assert!(!ui.hits.iter().any(|(_,_,_,_,hit)| matches!(hit, Hit::Select(_) | Hit::Toggle("watch"))));
+    }
+
+    #[test]
+    fn settings_offer_the_storage_encryption_choice() {
+        let mut ui = fixture_ui();
+        ui.settings = true;
+        ui.render_frame(W as u32, H as u32);
+        assert!(ui.hits.iter().any(|(_,_,_,_,hit)| *hit == Hit::ConfigureEncryption(true)));
+        ui.privacy_busy = true;
+        ui.render_frame(W as u32, H as u32);
+        assert!(!ui.hits.iter().any(|(_,_,_,_,hit)| matches!(hit, Hit::ConfigureEncryption(_))));
+    }
+
+    #[test]
+    fn encrypted_status_offers_disabling_without_changing_status_early() {
+        let mut ui = fixture_ui();
+        ui.app.privacy.encrypted = true;
+        ui.settings = true;
+        ui.render_frame(W as u32, H as u32);
+        assert!(ui.hits.iter().any(|(_,_,_,_,hit)| *hit == Hit::ConfigureEncryption(false)));
+        assert!(ui.app.privacy.encrypted);
+    }
+
+    #[test]
+    fn failed_keyring_preparation_keeps_first_choice_and_watching_paused() {
+        let (mut ui, worker) = fixture_ui_with_worker();
+        ui.app.privacy.configured = false;
+        ui.privacy_prompt = true;
+        ui.privacy_busy = true;
+        ui.privacy_target = Some(true);
+        ui.apply(AppEvent::EncryptionPrepared { enabled: true, result: Err("System keyring is locked".into()) });
+        assert!(ui.privacy_prompt);
+        assert!(!ui.privacy_busy);
+        assert!(!ui.app.privacy.configured);
+        assert!(!ui.app.privacy.encrypted);
+        assert!(ui.privacy_error.as_deref().unwrap().contains("keyring"));
+        assert!(worker.try_recv().is_err());
+    }
+
+    #[test]
+    fn choosing_plaintext_is_explicit_and_resumes_the_configured_watch_setting() {
+        let (mut ui, worker) = fixture_ui_with_worker();
+        ui.app.privacy.configured = false;
+        ui.privacy_prompt = true;
+        ui.apply(AppEvent::ConfigureEncryption { enabled: false });
+        assert!(ui.app.privacy.configured);
+        assert!(!ui.app.privacy.encrypted);
+        assert!(!ui.privacy_prompt);
+        assert!(matches!(worker.try_recv(), Ok(WorkerCmd::SetWatching(true))));
+    }
+
+    #[test]
+    fn dismissing_first_choice_does_not_choose_plaintext_or_start_watching() {
+        let (mut ui, worker) = fixture_ui_with_worker();
+        ui.app.privacy.configured = false;
+        ui.privacy_prompt = true;
+        ui.visible = true;
+        ui.handle_key_action(KeyAction::Close);
+        assert!(!ui.visible);
+        assert!(ui.privacy_prompt);
+        assert!(!ui.app.privacy.configured);
+        assert!(worker.try_recv().is_err());
+    }
+
+    #[test]
+    fn stale_page_results_cannot_replace_the_current_query() {
+        let mut ui = fixture_ui();
+        ui.page_token = 2;
+        ui.page_inflight = Some(2);
+        let stale = fixture_item(clipdeck_core::ItemType::Text, "stale result");
+        ui.apply(AppEvent::PageLoaded { token: 1, page: Ok(ItemPage { items: vec![stale], total: 1, offset: 0 }) });
+        assert!(ui.items.is_empty());
+        assert_eq!(ui.page_inflight, Some(2));
+        let current = fixture_item(clipdeck_core::ItemType::Text, "current result");
+        ui.apply(AppEvent::PageLoaded { token: 2, page: Ok(ItemPage { items: vec![current], total: 1, offset: 0 }) });
+        assert_eq!(ui.items[0].content, "current result");
+        assert_eq!(ui.page_inflight, None);
+    }
+
+    #[test]
+    fn page_requests_keep_only_the_latest_pending_query() {
+        let mut ui = fixture_ui();
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        ui.page_tx = Some(tx);
+        ui.visible = true;
+        ui.refresh();
+        let first = rx.try_recv().unwrap();
+        for query in ["one", "two", "latest"] {
+            ui.query = query.into();
+            ui.refresh();
+        }
+        assert!(rx.try_recv().is_err(), "more than one query is in flight");
+        assert_eq!(ui.pending_page.as_ref().unwrap().query, "latest");
+        ui.apply(AppEvent::PageLoaded { token: first.token, page: Ok(ItemPage { items: vec![], total: 0, offset: 0 }) });
+        let latest = rx.try_recv().unwrap();
+        assert_eq!(latest.query, "latest");
+        assert!(ui.pending_page.is_none());
+    }
+
+    #[test]
+    fn scrolling_past_the_end_keeps_the_last_page_instead_of_jumping_home() {
+        let mut ui = fixture_ui();
+        for n in 0..160 {
+            let mut item = fixture_item(clipdeck_core::ItemType::Text, "scroll sample");
+            item.id = format!("scroll-{n}");
+            item.content = format!("scroll sample {n}");
+            ui.app.store.add_item(item);
+        }
+        ui.refresh();
+        ui.selected = 0;
+        ui.scroll_x = 1_000_000.0;
+        ui.refresh();
+        assert!(ui.page_offset >= 128);
+        assert!(ui.item_at(ui.selected).is_some());
+        assert!(ui.scroll_x > 128.0 * 241.0);
+        assert!(ui.items.len() <= PAGE_SIZE);
+    }
+
+    #[test]
     fn keyboard_hints_have_glyphs_in_bundled_fonts() {
         let fonts = Fonts::bundled();
         for (key, label) in KEYBOARD_HINTS {
@@ -1641,14 +2037,21 @@ mod tests {
         let root = std::env::temp_dir().join(format!("clipdeck-ui-{}", clipdeck_core::store::uuid_v4ish()));
         let (worker_tx, worker_rx) = std::sync::mpsc::channel();
         let (accel_tx, _) = std::sync::mpsc::channel();
+        let mut app = AppState::open(&root);
+        app.store.settings.launch_at_login = false;
+        app.store.settings.sound_copy = false;
+        app.store.settings.sound_paste = false;
+        app.privacy = crate::security::PrivacyConfig { configured: true, ..Default::default() };
         (Ui {
-            app: AppState::open(&root), worker_tx, accel_tx,
+            app, events: None, privacy_prompt: false, privacy_busy: false, privacy_error: None, privacy_target: None, worker_tx, accel_tx,
             tray_view: Arc::new(RwLock::new(TrayView::default())),
             fonts: Fonts::bundled(), thumbnails: ThumbnailCache::default(), window: None, surface: None,
             query: String::new(), selected: 0, filter: 0, editing: None, dialog: None, drag: None, drop_feedback: None,
             settings: false, settings_notice: None, capture: false, wayland_session: true, stack_open: false, scroll_x: 0.0,
             view_w: W, visible: false, mods: ModifiersState::empty(), mouse: None, last_card_click: None,
             hits: vec![], items: vec![], pinboards: vec![],
+            page_offset: 0, total_items: 0, page_tx: None, page_key: None, page_token: 0,
+            page_inflight: None, pending_page: None, page_error: None,
         }, worker_rx)
     }
 
@@ -1751,7 +2154,7 @@ mod tests {
         assert!(command.contains(std::env::current_exe().unwrap().to_string_lossy().as_ref()));
         assert!(command.ends_with(" toggle"));
         assert!(ui.settings);
-        assert!(ui.app.store.items.is_empty());
+        assert!(ui.app.store.is_empty());
     }
 
     #[test]
@@ -1835,7 +2238,7 @@ mod tests {
         assert!(ui.dialog.is_some());
         ui.render_frame(W as u32, H as u32);
         click_hit(&mut ui, Hit::CancelDialog);
-        assert_eq!(ui.app.store.find(&item.id), Some(&item));
+        assert_eq!(ui.app.store.find(&item.id), Some(item.clone()));
     }
 
     #[test]
@@ -1908,7 +2311,7 @@ mod tests {
         ui.pointer_pressed();
         ui.pointer_moved(-20.0, 150.0);
         ui.pointer_released();
-        assert_eq!(ui.app.store.find(&item.id), Some(&item));
+        assert_eq!(ui.app.store.find(&item.id), Some(item.clone()));
         assert!(worker.try_recv().is_err());
     }
 
@@ -2049,7 +2452,7 @@ mod tests {
         ui.app.store.add_item(item.clone());
         let generation = ui.app.generation;
         ui.app.move_to_pinboard(&item.id, Some("missing-board"));
-        assert_eq!(ui.app.store.find(&item.id), Some(&item));
+        assert_eq!(ui.app.store.find(&item.id), Some(item.clone()));
         assert_eq!(ui.app.generation, generation);
     }
 
@@ -2228,6 +2631,7 @@ mod tests {
     fn scrolling_keeps_partial_cards_visible_and_hits_out_of_sidebar() {
         let mut ui = fixture_ui();
         ui.items = (0..9).map(|_| fixture_item(clipdeck_core::ItemType::Text, &"Long synthetic line. ".repeat(100))).collect();
+        ui.total_items = ui.items.len();
         for offset in [100.0, 220.0, 300.0, 460.0] {
             ui.scroll_x = offset;
             ui.hits.clear();
@@ -2260,19 +2664,19 @@ mod tests {
     }
 
     #[test]
-    fn image_redraw_reuses_thumbnail_until_store_changes() {
+    fn image_redraw_keeps_unchanged_images_and_notices_file_deletion() {
         let mut ui = fixture_ui();
-        let path = ui.app.store.image_dir.join("qa.png");
-        std::fs::write(&path, include_bytes!("../assets/icon.png")).unwrap();
+        ui.app.store.put_image("qa.png", include_bytes!("../assets/icon.png")).unwrap();
         let mut item = fixture_item(clipdeck_core::ItemType::Image, "qa.png");
         item.image_file = Some("qa.png".into());
+        ui.app.store.add_item(item.clone());
         let first = card_frame(&mut ui, &item);
-        std::fs::remove_file(&path).unwrap();
-        let second = card_frame(&mut ui, &item);
-        assert!(first.data() == second.data(), "redraw re-read the image file");
         ui.app.generation += 1;
+        let second = card_frame(&mut ui, &item);
+        assert!(first.data() == second.data(), "unrelated store mutation changed the thumbnail");
+        ui.app.store.remove(&item.id);
         let invalidated = card_frame(&mut ui, &item);
-        assert!(first.data() != invalidated.data(), "store change did not invalidate the image");
+        assert!(first.data() != invalidated.data(), "deleted image remained visible");
     }
 
     fn ch(c: &str) -> WinitKey {

@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "clipdeck-export.schema.json",
+  "title": "ClipDeck JSON export",
+  "type": "object",
+  "required": [
+    "version",
+    "exportedAt",
+    "items",
+    "pinboards"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "exportedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "$ref": "clipdeck-store.schema.json#/$defs/clipItem"
+      }
+    },
+    "pinboards": {
+      "type": "array",
+      "items": {
+        "$ref": "clipdeck-store.schema.json#/$defs/pinboard"
+      }
+    }
+  }
+}
