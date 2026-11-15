@@ -1,135 +1,50 @@
 # ClipDeck
 
-A native Linux clipboard manager. Search your history, organize clips into
-pinboards, and copy text or images from a compact overlay.
+Clipboard history for Linux. Find something you copied, organize it into
+pinboards, and copy it again when you need it. Text, links, images, editable
+clips, and a paste stack—all in a compact native overlay.
 
-![ClipDeck showing notes, code, a link, and an image in clipboard history](assets/screenshots/clipdeck-history.png)
+![ClipDeck clipboard history](assets/screenshots/clipdeck-history.png)
 
 ## Install
 
-### Snap Store — Ubuntu and other Snap-enabled distributions
+<iframe src="https://snapcraft.io/clipdeck/embedded?button=white" frameborder="0" width="100%" height="450px" style="border: 1px solid #CCC; border-radius: 2px;"></iframe>
 
-The stable Snap is available for **amd64 (x86_64)**.
+<!-- GitHub removes iframes; the official Store badge below remains usable. -->
+[![Get it from the Snap Store](https://snapcraft.io/en/light/install.svg)](https://snapcraft.io/clipdeck)
 
 ```bash
 sudo snap install clipdeck
 snap run clipdeck
 ```
 
-[View ClipDeck on the Snap Store](https://snapcraft.io/clipdeck).
+The Snap supports **amd64 (x86_64)**. Debian packages for **amd64 and arm64**
+are available from [GitHub Releases](https://github.com/mhosseinab/clipdeck/releases/latest).
+See the [installation guide](docs/usage.md#install) for setup and encryption.
 
-For encrypted history, connect the desktop keyring before choosing encryption:
+## Get started
 
-```bash
-sudo snap connect clipdeck:password-manager-service
-```
+1. **Copy** text, a link, or an image. ClipDeck keeps it while watching is enabled.
+2. **Find** it in the overlay using search, pinned clips, or a pinboard.
+3. **Reuse** it with Enter or a double-click, then paste into your application.
 
-On first launch, choose encrypted or plaintext history. Later starts keep the
-daemon hidden; open it from the tray or with `snap run clipdeck open`.
+**Shift+Enter** copies plain text. **Escape** hides the overlay without quitting.
+Use Settings or the tray menu to pause watching, change encryption, or control
+launch at login.
 
-### Debian package — Ubuntu 24.04 or newer
+On **X11**, open the overlay with **Ctrl+Shift+V**. On **GNOME Wayland**, create a
+custom keyboard shortcut with the command `/snap/bin/clipdeck toggle`.
+ClipDeck must already be running. [Shortcut setup →](docs/usage.md#keyboard-shortcut)
 
-Download the **amd64** or **arm64** `.deb` matching your machine from
-[GitHub Releases](https://github.com/mhosseinab/clipdeck/releases/latest), then:
+Encrypted history is optional and uses your desktop keyring. Exports and the
+system clipboard stay plaintext. Pause watching when handling sensitive content.
+[Privacy and backups →](docs/usage.md#privacy-and-backups)
 
-```bash
-sudo apt install ./clipdeck_2.1.0-1_$(dpkg --print-architecture).deb
-clipdeck
-```
+## Documentation
 
-Encrypted history requires a Secret Service keyring and `libsecret-tools`.
-Plaintext history works without them. If you install both the Snap and Debian
-package, use `snap run clipdeck` to target the Snap explicitly; their profiles
-are separate.
-
-## Use it
-
-1. Copy text, links, or images as usual. ClipDeck saves them while watching is on.
-2. Open the overlay from the tray or your keyboard shortcut, then search or select a clip.
-3. Press **Enter** or **double-click** to copy it. Paste into your destination app normally.
-
-**Shift+Enter** copies plain text. **Escape** closes the overlay; in Settings,
-it first returns to your clips. Closing the overlay keeps ClipDeck running.
-Use the tray to pause watching or quit, and Settings to control launch at login.
-GNOME may need a tray extension; the CLI also works without a tray.
-
-Pin frequently used clips with the card's pin control. Create named pinboards
-in the sidebar, then drag cards onto them or use a card's **↪** button. The pencil
-renames a board. Deleting a board keeps its clips in History. Clip deletion
-requires confirmation. Text clips can be edited, and the paste stack queues
-clips for reuse.
-
-### Keyboard shortcut
-
-On **X11**, the default shortcut is **Ctrl+Shift+V**; change it in Settings.
-
-On **GNOME Wayland**, add a custom shortcut in **Settings → Keyboard → View and
-Customize Shortcuts → Custom Shortcuts**. For the Snap, use:
-
-```text
-/snap/bin/clipdeck toggle
-```
-
-For the Debian package, use `clipdeck toggle`. ClipDeck must already be running.
-Settings → Global shortcut → **Copy Command** supplies the right command for
-your installation. Choose keys that do not conflict with another application.
-
-### CLI
-
-For the Snap, use `snap run clipdeck` followed by a command:
-
-| Command | Action |
-| --- | --- |
-| `open` | Show the overlay |
-| `toggle` | Show or hide it |
-| `settings` | Open Settings |
-| `quit` | Stop the daemon |
-| `export <file>` | Export history to JSON; quit first |
-| `import <file>` | Import history from JSON; quit first |
-| `--version` | Print the installed version |
-
-For the Debian package, use `clipdeck` followed by the same commands.
-
-## Privacy and backups
-
-Encrypted history uses SQLCipher and a key stored in your desktop keyring;
-image files are encrypted too. Losing the key makes that history unreadable.
-You can change encryption mode in Settings; conversion requires a restart and
-preserves existing SQLite history and images.
-
-The system clipboard and JSON exports are **plaintext**, even with encrypted
-history. Source-app identity may be unavailable on Wayland, so app exclusions
-and confidential-content filters cannot reliably protect those captures.
-Transient markers and screen-share exclusion are unsupported. **Pause watching
-or quit ClipDeck when handling sensitive content.** Folder sync is disabled for
-encrypted profiles.
-
-To export the Snap's history:
-
-```bash
-snap run clipdeck quit
-snap run clipdeck export "$HOME/clipdeck-export.json"
-snap run clipdeck
-```
-
-JSON exports include clips and boards, but **not image-file bytes, settings, or
-encryption keys**. For a full backup, quit ClipDeck and copy its entire profile:
-
-- **Snap:** `~/snap/clipdeck/common/profile/`
-- **Debian:** `$XDG_DATA_HOME/clipdeck/`, normally `~/.local/share/clipdeck/`
-
-Encrypted backups also need the desktop-keyring key associated with the original
-profile path. Moving the profile does not move that keyring association.
-Before upgrading, back up the full profile. Legacy JSON history is not migrated;
-existing SQLite history is preserved.
-
-## Build and contribute
-
-See the [development guide](docs/development.md) for build requirements, checks,
-packaging, and the repository map. The [agent workflow guide](docs/agentic-development.md)
-covers AI-assisted development.
-
-Report problems through [GitHub Issues](https://github.com/mhosseinab/clipdeck/issues).
+- [User guide](docs/usage.md) — installation, shortcuts, CLI, and backups.
+- [Development](docs/development.md) — build, test, and package from source.
+- [Report a problem](https://github.com/mhosseinab/clipdeck/issues).
 
 ## License
 
