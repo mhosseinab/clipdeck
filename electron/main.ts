@@ -81,6 +81,11 @@ function makeIcon(): Electron.NativeImage {
 
 /* ---------- windows ---------- */
 
+function toggleOverlay(): void {
+  if (overlay?.isVisible()) hideOverlay();
+  else showOverlay();
+}
+
 function applyScreenShare(): void {
   if (!overlay) return;
   overlay.setContentProtection(!store.settings().showInScreenShare);
@@ -381,6 +386,30 @@ function wireIpc(): void {
     }
   });
   ipcMain.handle("app:checkUpdates", () => checkUpdates());
+  ipcMain.handle("shortcut:set", (_e, accelerator: string) => {
+    const old = store.settings().shortcut;
+    try {
+      globalShortcut.unregister(old);
+    } catch {
+      /* not registered */
+    }
+    let ok = false;
+    try {
+      ok = globalShortcut.register(accelerator, toggleOverlay);
+    } catch {
+      ok = false;
+    }
+    if (ok) {
+      store.setSettings({ shortcut: accelerator });
+      return { ok: true, shortcut: accelerator };
+    }
+    try {
+      globalShortcut.register(old, toggleOverlay);
+    } catch {
+      /* restore best-effort */
+    }
+    return { ok: false, shortcut: old };
+  });
   ipcMain.handle("image:dataUrl", (_e, file: string) => {
     const safe = path.basename(file);
     const p = path.join(store.images, safe);
@@ -457,10 +486,7 @@ if (!gotLock) {
     }, 30000);
 
     try {
-      globalShortcut.register(store.settings().shortcut, () => {
-        if (overlay?.isVisible()) hideOverlay();
-        else showOverlay();
-      });
+      globalShortcut.register(store.settings().shortcut, toggleOverlay);
     } catch {
       /* Wayland or restricted session: tray click still works */
     }

@@ -70,6 +70,7 @@ export interface ClipDeckApi {
   exportHistory(): Promise<string | null>;
   importHistory(): Promise<{ imported: number; skipped: number } | null>;
   checkUpdates(): Promise<string>;
+  setShortcut(accelerator: string): Promise<{ ok: boolean; shortcut: string }>;
   onItemsChanged(cb: () => void): () => void;
   onPlaySound(cb: (kind: "copy" | "paste") => void): () => void;
 }

@@ -35,9 +35,9 @@ html, body, #root {
   border: 1px solid var(--border);
   border-bottom: none;
   border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
-  box-shadow:
-    0 -18px 70px rgba(0, 0, 0, 0.6),
-    inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  /* no outer shadow: on transparent windows its blur bleeds past the rounded
+     corners and shows as dark patches in the window's top corners */
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09);
   padding: 14px 18px 10px;
 }
 
@@ -553,6 +553,33 @@ kbd {
 }
 .settings-page button:hover { background: rgba(143, 176, 255, 0.24); }
 .btn-group { display: flex; gap: 8px; }
+.shortcut-wrap { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.shortcut-row { display: flex; gap: 8px; align-items: center; }
+.shortcut-btn {
+  min-width: 220px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+.shortcut-btn.recording {
+  border-color: var(--accent);
+  background: rgba(143, 176, 255, 0.12);
+  color: var(--accent);
+  animation: rec-pulse 1.2s ease-in-out infinite;
+}
+@keyframes rec-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(109, 149, 255, 0.35); }
+  50% { box-shadow: 0 0 0 5px rgba(109, 149, 255, 0); }
+}
+.shortcut-error {
+  font-size: 11px;
+  color: #ff7b8d;
+}
 .status-line {
   margin-top: 10px;
   padding: 8px 12px;

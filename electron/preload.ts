@@ -26,6 +26,7 @@ export interface ClipDeckApi {
   exportHistory(): Promise<string | null>;
   importHistory(): Promise<{ imported: number; skipped: number } | null>;
   checkUpdates(): Promise<string>;
+  setShortcut(accelerator: string): Promise<{ ok: boolean; shortcut: string }>;
   getImage(file: string): Promise<string | null>;
   getFavicon(url: string): Promise<string | null>;
   startDrag(file: string): void;
@@ -58,6 +59,7 @@ const api: ClipDeckApi = {
   exportHistory: () => ipcRenderer.invoke("app:export"),
   importHistory: () => ipcRenderer.invoke("app:import"),
   checkUpdates: () => ipcRenderer.invoke("app:checkUpdates"),
+  setShortcut: (accelerator) => ipcRenderer.invoke("shortcut:set", accelerator),
   getImage: (file) => ipcRenderer.invoke("image:dataUrl", file),
   getFavicon: (url) => ipcRenderer.invoke("link:favicon", url),
   startDrag: (file) => ipcRenderer.send("drag:start", file),

@@ -1,9 +1,116 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Settings } from "./types";
+
+const DEFAULT_SHORTCUT = "CommandOrControl+Shift+V";
+
+const CODE_TO_KEY: Record<string, string> = {
+  Space: "Space",
+  Enter: "Enter",
+  Escape: "Escape",
+  Tab: "Tab",
+  Backspace: "Backspace",
+  Delete: "Delete",
+  ArrowUp: "Up",
+  ArrowDown: "Down",
+  ArrowLeft: "Left",
+  ArrowRight: "Right",
+  Comma: "Comma",
+  Period: "Period",
+  Slash: "Slash",
+  Backslash: "Backslash",
+  Minus: "Minus",
+  Equal: "Equal",
+  Semicolon: "Semicolon",
+  Quote: "Quote",
+  Backquote: "Backquote",
+  BracketLeft: "BracketLeft",
+  BracketRight: "BracketRight",
+};
+
+function accelFromEvent(e: KeyboardEvent): string | null {
+  if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return null;
+  const parts: string[] = [];
+  if (e.ctrlKey || e.metaKey) parts.push("CommandOrControl");
+  if (e.altKey) parts.push("Alt");
+  if (e.shiftKey) parts.push("Shift");
+  let key: string | null = null;
+  const letter = /^Key([A-Z])$/.exec(e.code);
+  const digit = /^Digit(\d)$/.exec(e.code);
+  const fn = /^F(\d{1,2})$/.exec(e.code);
+  if (letter) key = letter[1];
+  else if (digit) key = digit[1];
+  else if (fn) key = "F" + fn[1];
+  else key = CODE_TO_KEY[e.code] ?? null;
+  if (!key) return null;
+  parts.push(key);
+  return parts.join("+");
+}
+
+function prettyAccel(accel: string): string {
+  const map: Record<string, string> = {
+    CommandOrControl: "⌘/Ctrl",
+    Command: "⌘",
+    Control: "Ctrl",
+    Shift: "⇧",
+    Alt: "⌥",
+  };
+  return accel
+    .split("+")
+    .map((p) => map[p] ?? p)
+    .join("+");
+}
+
+function ShortcutRecorder({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (accel: string) => void;
+}) {
+  const [recording, setRecording] = useState(false);
+  const recordingRef = useRef(false);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!recordingRef.current) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === "Escape") {
+        recordingRef.current = false;
+        setRecording(false);
+        return;
+      }
+      const accel = accelFromEvent(e);
+      if (accel) {
+        recordingRef.current = false;
+        setRecording(false);
+        onChange(accel);
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [onChange]);
+
+  return (
+    <div className="shortcut-row">
+      <button
+        className={"shortcut-btn" + (recording ? " recording" : "")}
+        onClick={() => {
+          recordingRef.current = true;
+          setRecording(true);
+        }}
+      >
+        {recording ? "Press shortcut… (Esc to cancel)" : prettyAccel(value)}
+      </button>
+      <button onClick={() => onChange(DEFAULT_SHORTCUT)}>Reset</button>
+    </div>
+  );
+}
 
 export default function SettingsPage() {
   const [s, setS] = useState<Settings | null>(null);
   const [status, setStatus] = useState("");
+  const [shortcutError, setShortcutError] = useState(false);
 
   useEffect(() => {
     void window.clipdeck.getSettings().then(setS);
@@ -13,6 +120,13 @@ export default function SettingsPage() {
 
   const patch = (p: Partial<Settings>) => {
     void window.clipdeck.setSettings(p).then(setS);
+  };
+
+  const applyShortcut = (accel: string) => {
+    void window.clipdeck.setShortcut(accel).then((r) => {
+      setShortcutError(!r.ok);
+      void window.clipdeck.getSettings().then(setS);
+    });
   };
 
   return (
@@ -35,10 +149,13 @@ export default function SettingsPage() {
             onChange={(e) => patch({ maxItems: Number(e.target.value) || 5000 })}
           />
         </label>
-        <label className="row">
+        <div className="row">
           <span>Global shortcut</span>
-          <input value={s.shortcut} onChange={(e) => patch({ shortcut: e.target.value })} />
-        </label>
+          <div className="shortcut-wrap">
+            <ShortcutRecorder value={s.shortcut} onChange={applyShortcut} />
+            {shortcutError && <div className="shortcut-error">Shortcut unavailable — try another combination.</div>}
+          </div>
+        </div>
         <label className="row">
           <span>Show overlay during screen sharing</span>
           <input
