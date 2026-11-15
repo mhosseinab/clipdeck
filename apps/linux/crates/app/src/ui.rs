@@ -592,6 +592,10 @@ impl Ui {
 
 fn window_attributes() -> winit::window::WindowAttributes {
     use winit::platform::wayland::WindowAttributesExtWayland;
+    let window_height = dump_window_height(
+        std::env::var_os("CLIPDECK_DUMP_UI").is_some(),
+        std::env::var("CLIPDECK_DUMP_WINDOW_HEIGHT").ok().as_deref(),
+    );
     let (width, height, rgba) = crate::worker::decode_png(include_bytes!("../assets/icon.png"))
         .expect("bundled application PNG");
     let icon = winit::window::Icon::from_rgba(rgba, width as u32, height as u32)
@@ -601,10 +605,20 @@ fn window_attributes() -> winit::window::WindowAttributes {
             .with_window_icon(Some(icon))
             .with_title("ClipDeck")
             .with_window_level(winit::window::WindowLevel::AlwaysOnTop)
-            .with_inner_size(winit::dpi::LogicalSize::new(W, H))
+            .with_inner_size(winit::dpi::LogicalSize::new(W, window_height))
             .with_decorations(false)
             .with_transparent(true)
             .with_resizable(false)
+}
+
+fn dump_window_height(dumping: bool, height: Option<&str>) -> f32 {
+    if !dumping {
+        return H;
+    }
+    height.and_then(|value| value.parse::<u32>().ok())
+        .filter(|height| (H as u32..=2160).contains(height))
+        .map(|height| height as f32)
+        .unwrap_or(H)
 }
 
 impl Ui {
@@ -1735,10 +1749,14 @@ fn keyboard_settings_command() -> std::process::Command {
 }
 
 fn shortcut_command() -> String {
-    std::env::current_exe().map(|path| {
-        let path = path.to_string_lossy().replace('\\', "\\\\").replace('"', "\\\"");
-        format!("\"{path}\" toggle")
-    }).unwrap_or_else(|_| "clipdeck toggle".into())
+    std::env::current_exe().map(|path| shortcut_command_for(&path, std::env::var_os("SNAP").is_some()))
+        .unwrap_or_else(|_| "clipdeck toggle".into())
+}
+
+fn shortcut_command_for(path: &std::path::Path, snap: bool) -> String {
+    let path = if snap { std::path::Path::new("/snap/bin/clipdeck") } else { path };
+    let path = path.to_string_lossy().replace('\\', "\\\\").replace('"', "\\\"");
+    format!("\"{path}\" toggle")
 }
 
 /* ===================== input mapping ===================== */
@@ -1842,6 +1860,14 @@ fn key_code(key: &Key) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn capture_height_is_bounded_and_requires_frame_dumping() {
+        assert_eq!(super::dump_window_height(true, Some("700")), 700.0);
+        assert_eq!(super::dump_window_height(false, Some("700")), super::H);
+        for height in [None, Some("bad"), Some("0"), Some("NaN"), Some("2161")] {
+            assert_eq!(super::dump_window_height(true, height), super::H);
+        }
+    }
     use super::*;
     use winit::keyboard::Key as WinitKey;
 
@@ -2155,6 +2181,13 @@ mod tests {
         assert!(command.ends_with(" toggle"));
         assert!(ui.settings);
         assert!(ui.app.store.is_empty());
+    }
+
+    #[test]
+    fn snap_shortcut_uses_wrapper_to_preserve_profile_and_survive_refresh() {
+        let path = std::path::Path::new("/snap/clipdeck/2/bin/clipdeck");
+        assert_eq!(shortcut_command_for(path, true), "\"/snap/bin/clipdeck\" toggle");
+        assert_eq!(shortcut_command_for(path, false), "\"/snap/clipdeck/2/bin/clipdeck\" toggle");
     }
 
     #[test]

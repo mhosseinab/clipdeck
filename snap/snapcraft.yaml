@@ -1,0 +1,73 @@
+name: clipdeck
+title: ClipDeck
+version: '2.1.0'
+summary: Native clipboard history with search and pinboards
+description: |
+  ClipDeck is a native Linux clipboard manager with searchable history,
+  pinboards, a paste stack and optional encrypted storage.
+  GNOME Wayland shortcuts require configuration in system Keyboard Settings.
+license: MIT
+website: https://github.com/mhosseinab/clipdeck
+contact: https://github.com/mhosseinab/clipdeck/issues
+issues: https://github.com/mhosseinab/clipdeck/issues
+source-code: https://github.com/mhosseinab/clipdeck
+base: core24
+grade: stable
+confinement: strict
+icon: apps/linux/crates/app/assets/icon.png
+
+apps:
+  clipdeck:
+    command: bin/clipdeck
+    command-chain: [bin/clipdeck-launcher]
+    desktop: usr/share/applications/io.github.mhosseinab.clipdeck.desktop
+    autostart: clipdeck.desktop
+    environment:
+      XKB_CONFIG_ROOT: $SNAP/usr/share/X11/xkb
+      XLOCALEDIR: $SNAP/usr/share/X11/locale
+    plugs:
+      - desktop
+      - x11
+      - wayland
+      - unity7
+      - home
+      # The daemon listens on a profile-local Unix control socket.
+      - network-bind
+      - audio-playback
+      - password-manager-service
+
+parts:
+  clipdeck:
+    plugin: rust
+    source: .
+    source-subdir: apps/linux
+    rust-channel: '1.89.0'
+    build-packages:
+      - build-essential
+      - pkg-config
+      - libdbus-1-dev
+      - perl
+    stage-packages:
+      - libdbus-1-3
+      - libsecret-tools
+      - libx11-6
+      - libx11-xcb1
+      - libxcb1
+      - libxrandr2
+      - libxi6
+      - libxcursor1
+      - libxkbcommon0
+      - libxkbcommon-x11-0
+      - xkb-data
+      - libwayland-client0
+      - libwayland-cursor0
+      - libwayland-egl1
+    override-build: |
+      cd apps/linux
+      cargo build --locked --release --package clipdeck-app
+      install -Dm755 target/release/clipdeck "$CRAFT_PART_INSTALL/bin/clipdeck"
+      install -Dm755 ../../snap/local/clipdeck-launcher "$CRAFT_PART_INSTALL/bin/clipdeck-launcher"
+      install -Dm644 crates/app/assets/io.github.mhosseinab.clipdeck.desktop "$CRAFT_PART_INSTALL/usr/share/applications/io.github.mhosseinab.clipdeck.desktop"
+      install -Dm644 crates/app/assets/icon.png "$CRAFT_PART_INSTALL/usr/share/icons/hicolor/256x256/apps/io.github.mhosseinab.clipdeck.png"
+      install -Dm644 crates/app/assets/fonts/OFL.txt "$CRAFT_PART_INSTALL/usr/share/doc/clipdeck/OFL-Roboto.txt"
+      install -Dm644 ../../LICENSE "$CRAFT_PART_INSTALL/usr/share/doc/clipdeck/LICENSE"

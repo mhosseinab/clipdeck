@@ -1,0 +1,18 @@
+#!/bin/sh
+set -eu
+
+# All CLI commands and the desktop daemon must share the same Snap profile.
+export CLIPDECK_USER_DATA="$SNAP_USER_COMMON/profile"
+
+# snapd gives the app a private runtime directory; the compositor is in its parent.
+case "${WAYLAND_DISPLAY:-wayland-0}" in
+    /*) ;;
+    *)
+        runtime_directory="${XDG_RUNTIME_DIR:-}"
+        wayland_socket="${runtime_directory%/*}/${WAYLAND_DISPLAY:-wayland-0}"
+        if [ -S "$wayland_socket" ]; then
+            export WAYLAND_DISPLAY="$wayland_socket"
+        fi
+        ;;
+esac
+exec "$@"
