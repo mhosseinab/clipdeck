@@ -40,7 +40,7 @@
         {
           "type": "git",
           "url": "https://github.com/mhosseinab/clipdeck.git",
-          "commit": "fd665afbcf64dcf39de9ba2ec1bd2bf65570391a"
+          "commit": "e80e346fec85e1cbcb6b34b94a32341e5786536b"
         },
         "cargo-sources.json",
         {
