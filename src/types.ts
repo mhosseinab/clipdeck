@@ -36,6 +36,10 @@ export interface Settings {
   generateLinkPreviews: boolean;
   pasteAsPlainText: boolean;
   stackDirection: "fifo" | "lifo";
+  plainTextApps: string[];
+  syncDirectory: string;
+  showInScreenShare: boolean;
+  hooks: { event: "copy" | "paste"; command: string }[];
 }
 
 export interface ClipDeckApi {
@@ -48,6 +52,9 @@ export interface ClipDeckApi {
   reorder(ids: string[]): Promise<boolean>;
   pushStack(id: string): Promise<ClipItem | null>;
   popStack(): Promise<ClipItem | null>;
+  stackList(): Promise<ClipItem[]>;
+  unstack(id: string): Promise<ClipItem | null>;
+  clearStack(): Promise<boolean>;
   listPinboards(): Promise<Pinboard[]>;
   addPinboard(name: string): Promise<Pinboard>;
   removePinboard(id: string): Promise<boolean>;
@@ -58,6 +65,11 @@ export interface ClipDeckApi {
   clearHistory(): Promise<boolean>;
   appInfo(): Promise<{ platform: string; lastApp: string | null; version: string }>;
   getImage(file: string): Promise<string | null>;
+  getFavicon(url: string): Promise<string | null>;
+  startDrag(file: string): void;
+  exportHistory(): Promise<string | null>;
+  importHistory(): Promise<{ imported: number; skipped: number } | null>;
+  checkUpdates(): Promise<string>;
   onItemsChanged(cb: () => void): () => void;
   onPlaySound(cb: (kind: "copy" | "paste") => void): () => void;
 }

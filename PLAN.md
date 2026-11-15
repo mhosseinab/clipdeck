@@ -49,7 +49,12 @@ Ghidra 12.1.4 analysis, bundle Info.plist. Evidence rows are target *data*.
 - [x] Providers installed & configured (Ghidra 12.1.4, Kuna 1.833, IDA Free 9.3)
 - [x] Thin x86_64 slice extracted; strings/feature inventory mined (54,763 strings)
 - [x] T0: watcher + store + overlay + card strip + search + copy/paste + tray + sounds + settings
-- [x] End-to-end smoke test: clipboard→watcher→store verified on Ubuntu (Wayland)
-- [ ] T1: transient/confidential rules, app blocklist, plain-text paste, paste stack UI,
-      sidebar rail, link previews, item editor
-- [ ] T2: direct-to-app paste, sync, packaging (dmg/AppImage/deb), macOS runtime QA
+- [x] T1 complete: transient/confidential rules, app blocklist, plain-text paste (+ per-app),
+      paste stack panel (FIFO/LIFO), sidebar rail, favicon link previews, code syntax
+      highlighting, item editor, drag reorder + drag-out, tray recents, screen-share flag
+- [x] T2 complete: packaging (AppImage/deb/dmg/zip) + CI release workflow, export/import,
+      folder-based sync, scripting hooks (copy/paste), auto-update scaffold (electron-updater)
+- [x] Verification: 7/7 logic tests pass (store dedupe/trim/export-import, sync merge, hooks),
+      tsc clean (src + electron), runtime smoke on Ubuntu (capture + new settings schema),
+      `electron-builder` packaging passes
+- [ ] macOS runtime QA (builds shipped unsigned via CI)

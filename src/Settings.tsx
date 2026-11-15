@@ -3,6 +3,7 @@ import type { Settings } from "./types";
 
 export default function SettingsPage() {
   const [s, setS] = useState<Settings | null>(null);
+  const [status, setStatus] = useState("");
 
   useEffect(() => {
     void window.clipdeck.getSettings().then(setS);
@@ -37,6 +38,14 @@ export default function SettingsPage() {
         <label className="row">
           <span>Global shortcut</span>
           <input value={s.shortcut} onChange={(e) => patch({ shortcut: e.target.value })} />
+        </label>
+        <label className="row">
+          <span>Show overlay during screen sharing</span>
+          <input
+            type="checkbox"
+            checked={s.showInScreenShare}
+            onChange={(e) => patch({ showInScreenShare: e.target.checked })}
+          />
         </label>
       </section>
 
@@ -80,13 +89,100 @@ export default function SettingsPage() {
       </section>
 
       <section>
-        <h2>Excluded apps</h2>
-        <textarea
-          rows={4}
-          placeholder="One app name per line (history from these apps is ignored)"
-          value={s.excludedApps.join("\n")}
-          onChange={(e) => patch({ excludedApps: e.target.value.split("\n").map((x) => x.trim()).filter(Boolean) })}
-        />
+        <h2>App rules</h2>
+        <label className="column">
+          <span>Excluded apps — never save clips from these (one per line)</span>
+          <textarea
+            rows={4}
+            value={s.excludedApps.join("\n")}
+            onChange={(e) => patch({ excludedApps: e.target.value.split("\n").map((x) => x.trim()).filter(Boolean) })}
+          />
+        </label>
+        <label className="column">
+          <span>Always paste as plain text into these apps (one per line)</span>
+          <textarea
+            rows={3}
+            placeholder="e.g. Terminal"
+            value={s.plainTextApps.join("\n")}
+            onChange={(e) => patch({ plainTextApps: e.target.value.split("\n").map((x) => x.trim()).filter(Boolean) })}
+          />
+        </label>
+      </section>
+
+      <section>
+        <h2>Sync</h2>
+        <label className="column">
+          <span>
+            Sync folder — items are shared via a JSONL file in this directory (e.g. a folder synced by
+            Syncthing/Dropbox). Leave empty to disable.
+          </span>
+          <input
+            type="text"
+            placeholder="/path/to/shared/folder"
+            value={s.syncDirectory}
+            onChange={(e) => patch({ syncDirectory: e.target.value })}
+          />
+        </label>
+      </section>
+
+      <section>
+        <h2>Scripting hooks</h2>
+        <label className="column">
+          <span>
+            One command per line as <code>event=command</code> where event is <code>copy</code> or{" "}
+            <code>paste</code>. The item content is piped to the command's stdin (5s timeout).
+          </span>
+          <textarea
+            rows={3}
+            placeholder={"copy=notify-send \"copied\"\npaste=pbcopy > /dev/null"}
+            value={s.hooks.map((h) => `${h.event}=${h.command}`).join("\n")}
+            onChange={(e) =>
+              patch({
+                hooks: e.target.value
+                  .split("\n")
+                  .map((line) => {
+                    const eq = line.indexOf("=");
+                    if (eq <= 0) return null;
+                    const event = line.slice(0, eq).trim();
+                    const command = line.slice(eq + 1).trim();
+                    if ((event === "copy" || event === "paste") && command) return { event: event as "copy" | "paste", command };
+                    return null;
+                  })
+                  .filter((h): h is { event: "copy" | "paste"; command: string } => h !== null),
+              })
+            }
+          />
+        </label>
+      </section>
+
+      <section>
+        <h2>Data</h2>
+        <div className="row">
+          <span>Export / import history (JSON)</span>
+          <div className="btn-group">
+            <button
+              onClick={() =>
+                void window.clipdeck.exportHistory().then((p) => setStatus(p ? `Exported to ${p}` : "Export cancelled"))
+              }
+            >
+              Export…
+            </button>
+            <button
+              onClick={() =>
+                void window.clipdeck.importHistory().then((r) =>
+                  setStatus(r ? `Imported ${r.imported}, skipped ${r.skipped}` : "Import cancelled"),
+                )
+              }
+            >
+              Import…
+            </button>
+          </div>
+        </div>
+        <div className="row">
+          <span>Updates</span>
+          <button onClick={() => void window.clipdeck.checkUpdates().then(setStatus)}>Check for updates</button>
+        </div>
+        {status && <div className="status-line">{status}</div>}
       </section>
 
       <section>

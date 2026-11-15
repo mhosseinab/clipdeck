@@ -46,6 +46,10 @@ export interface Settings {
   generateLinkPreviews: boolean;
   pasteAsPlainText: boolean;
   stackDirection: "fifo" | "lifo";
+  plainTextApps: string[];
+  syncDirectory: string;
+  showInScreenShare: boolean;
+  hooks: { event: "copy" | "paste"; command: string }[];
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -62,6 +66,10 @@ export const DEFAULT_SETTINGS: Settings = {
   generateLinkPreviews: true,
   pasteAsPlainText: false,
   stackDirection: "fifo",
+  plainTextApps: [],
+  syncDirectory: "",
+  showInScreenShare: true,
+  hooks: [],
 };
 
 interface StoreShape {
@@ -230,5 +238,46 @@ export class Store {
       item.imageFile = file;
       this.persist();
     }
+  }
+
+  exportJSON(): string {
+    return JSON.stringify(
+      { version: 1, exportedAt: new Date().toISOString(), items: this.data.items, pinboards: this.data.pinboards },
+      null,
+      2,
+    );
+  }
+
+  importJSON(raw: string): { imported: number; skipped: number } {
+    const parsed = JSON.parse(raw) as Partial<StoreShape> & { items?: ClipItem[] };
+    const incoming = parsed.items ?? [];
+    const pinboards = parsed.pinboards ?? [];
+    let imported = 0;
+    let skipped = 0;
+    const seen = new Set(this.data.items.map((i) => i.type + "|" + i.content));
+    for (const item of incoming) {
+      if (!item || typeof item.content !== "string" || !item.id) {
+        skipped++;
+        continue;
+      }
+      const key = item.type + "|" + item.content;
+      if (seen.has(key)) {
+        skipped++;
+        continue;
+      }
+      seen.add(key);
+      this.data.items.push({ ...item, pinboardId: item.pinboardId ?? null, stackOrder: null });
+      imported++;
+    }
+    for (const pb of pinboards) {
+      if (pb?.id && !this.data.pinboards.some((p) => p.id === pb.id)) this.data.pinboards.push(pb);
+    }
+    this.data.items.sort((a, b) => b.createdAt - a.createdAt);
+    this.persist();
+    return { imported, skipped };
+  }
+
+  recentItems(n: number): ClipItem[] {
+    return this.data.items.slice(0, n);
   }
 }

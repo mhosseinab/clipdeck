@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ClipItem, Pinboard, Settings } from "./types";
 import { playSound } from "./sounds";
+import { highlight } from "./highlight";
 
 const TYPE_LABEL: Record<string, string> = {
   text: "Text",
@@ -55,41 +56,116 @@ const IconX = () => (
   </svg>
 );
 
+const IconGrip = () => (
+  <svg width="9" height="12" viewBox="0 0 9 12" fill="currentColor">
+    {[0, 1, 2].map((r) =>
+      [0, 1].map((c) => <circle key={`${r}${c}`} cx={2 + c * 5} cy={2 + r * 4} r="1.3" />),
+    )}
+  </svg>
+);
+
+const IconPencil = () => (
+  <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+    <path d="M8.2 1.8l2 2L4 10H2V8l6.2-6.2z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+  </svg>
+);
+
+function LinkPreview({ item }: { item: ClipItem }) {
+  const [fav, setFav] = useState<string | null>(null);
+  useEffect(() => {
+    if (item.type === "link") void window.clipdeck.getFavicon(item.content).then(setFav);
+  }, [item]);
+  return (
+    <div className="link-preview">
+      {fav ? (
+        <img className="favicon-img" src={fav} alt="" />
+      ) : (
+        <div className="favicon-tile">{item.preview.slice(0, 1).toUpperCase()}</div>
+      )}
+      <div className="link-title">{item.title}</div>
+      <div className="link-host">{item.preview}</div>
+    </div>
+  );
+}
+
 function Card({
   item,
   selected,
+  editing,
   onSelect,
   onPaste,
   onCopy,
   onDelete,
   onPin,
+  onEdit,
+  onSaveEdit,
+  onDragStart,
+  onDrop,
 }: {
   item: ClipItem;
   selected: boolean;
+  editing: boolean;
   onSelect: () => void;
   onPaste: () => void;
   onCopy: () => void;
   onDelete: () => void;
   onPin: () => void;
+  onEdit: () => void;
+  onSaveEdit: (content: string) => void;
+  onDragStart: () => void;
+  onDrop: () => void;
 }) {
   const [img, setImg] = useState<string | null>(null);
+  const [draft, setDraft] = useState(item.content);
   useEffect(() => {
     if (item.type === "image" && item.imageFile) {
       void window.clipdeck.getImage(item.imageFile).then(setImg);
     }
+    setDraft(item.content);
   }, [item]);
+
+  const draggableOut = item.type === "image" || item.type === "file";
 
   return (
     <div
       className={"card" + (selected ? " selected" : "")}
       onClick={onSelect}
-      onDoubleClick={onPaste}
+      onDoubleClick={() => !editing && onPaste()}
       onContextMenu={(e) => {
         e.preventDefault();
         onCopy();
       }}
+      onDragOver={(e) => {
+        e.preventDefault();
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        onDrop();
+      }}
+      draggable={draggableOut && !editing}
+      onDragStart={(e) => {
+        if (item.type === "image" && img) {
+          e.dataTransfer.setData("DownloadURL", `image/png:clipdeck-image.png:${img}`);
+          return;
+        }
+        const first = item.content.split("\n")[0];
+        if (item.type === "file") window.clipdeck.startDrag(first);
+        onDragStart();
+      }}
     >
       <div className="card-head">
+        <button
+          className="card-btn grip"
+          title="Drag to reorder"
+          draggable
+          onDragStart={(e) => {
+            e.stopPropagation();
+            onDragStart();
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <IconGrip />
+        </button>
         <button
           className={"card-btn" + (item.pinned ? " pinned" : "")}
           title={item.pinned ? "Unpin" : "Pin"}
@@ -102,6 +178,16 @@ function Card({
         </button>
         <button
           className="card-btn"
+          title="Edit"
+          onClick={(e) => {
+            e.stopPropagation();
+            onEdit();
+          }}
+        >
+          <IconPencil />
+        </button>
+        <button
+          className="card-btn"
           title="Delete"
           onClick={(e) => {
             e.stopPropagation();
@@ -111,42 +197,129 @@ function Card({
           <IconX />
         </button>
       </div>
-      <div className={"card-preview type-" + item.type}>
-        {item.type === "image" && img && <img src={img} alt="" />}
-        {item.type === "color" && (
-          <div className="color-swatch" style={{ background: item.content.trim() }} />
-        )}
-        {item.type === "link" && (
-          <div className="link-preview">
-            <div className="favicon-tile">{item.preview.slice(0, 1).toUpperCase()}</div>
-            <div className="link-title">{item.title}</div>
-            <div className="link-host">{item.preview}</div>
+
+      {editing ? (
+        <div className="card-edit">
+          <textarea value={draft} onChange={(e) => setDraft(e.target.value)} autoFocus />
+          <div className="card-edit-actions">
+            <button
+              className="edit-save"
+              onClick={(e) => {
+                e.stopPropagation();
+                onSaveEdit(draft);
+              }}
+            >
+              Save
+            </button>
+            <button
+              className="edit-cancel"
+              onClick={(e) => {
+                e.stopPropagation();
+                setDraft(item.content);
+                onEdit();
+              }}
+            >
+              Cancel
+            </button>
           </div>
-        )}
-        {item.type === "file" && (
-          <div className="file-preview">
-            {item.content.split("\n").slice(0, 4).map((f) => (
-              <div key={f} className="file-row">
-                📄 {f.split("/").pop()}
+        </div>
+      ) : (
+        <>
+          <div className={"card-preview type-" + item.type}>
+            {item.type === "image" && img && <img src={img} alt="" />}
+            {item.type === "color" && (
+              <div className="color-swatch" style={{ background: item.content.trim() }} />
+            )}
+            {item.type === "link" && <LinkPreview item={item} />}
+            {item.type === "file" && (
+              <div className="file-preview">
+                {item.content.split("\n").slice(0, 4).map((f) => (
+                  <div key={f} className="file-row">
+                    📄 {f.split("/").pop()}
+                  </div>
+                ))}
+                {item.content.split("\n").length > 4 && (
+                  <div className="file-row">+{item.content.split("\n").length - 4} more</div>
+                )}
               </div>
-            ))}
-            {item.content.split("\n").length > 4 && (
-              <div className="file-row">+{item.content.split("\n").length - 4} more</div>
+            )}
+            {item.type === "code" && (
+              <pre className="code-preview" dangerouslySetInnerHTML={{ __html: highlight(item.content.slice(0, 600)) }} />
+            )}
+            {(item.type === "text" || item.type === "html") && (
+              <pre className="text-preview">{item.content.slice(0, 600)}</pre>
             )}
           </div>
-        )}
-        {(item.type === "code" || item.type === "text" || item.type === "html") && (
-          <pre className={item.type === "code" ? "code-preview" : "text-preview"}>
-            {item.content.slice(0, 600)}
-          </pre>
-        )}
+          <div className="card-meta">
+            <span className={"type-badge t-" + item.type}>{TYPE_LABEL[item.type] ?? item.type}</span>
+            <span className="meta-dim">{timeAgo(item.createdAt)}</span>
+            {item.stackOrder ? <span className="stack-chip">#{item.stackOrder}</span> : null}
+            {item.sourceApp && <span className="meta-dim app">{item.sourceApp}</span>}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function StackPanel({
+  items,
+  onClose,
+  onChanged,
+}: {
+  items: ClipItem[];
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  return (
+    <div className="stack-panel" onClick={(e) => e.stopPropagation()}>
+      <div className="stack-head">
+        <span>Paste stack ({items.length})</span>
+        <button
+          className="pill ghost"
+          onClick={() => void window.clipdeck.clearStack().then(onChanged)}
+        >
+          Clear
+        </button>
+        <button className="pill ghost" onClick={onClose}>
+          ✕
+        </button>
       </div>
-      <div className="card-meta">
-        <span className={"type-badge t-" + item.type}>{TYPE_LABEL[item.type] ?? item.type}</span>
-        <span className="meta-dim">{timeAgo(item.createdAt)}</span>
-        {item.stackOrder ? <span className="stack-chip">#{item.stackOrder}</span> : null}
-        {item.sourceApp && <span className="meta-dim app">{item.sourceApp}</span>}
+      <div className="stack-list">
+        {items.map((item, idx) => (
+          <div key={item.id} className="stack-row">
+            <span className="stack-idx">{idx + 1}</span>
+            <span className="stack-title">{item.title || item.preview}</span>
+            <button
+              className="card-btn visible"
+              title="Move up"
+              disabled={idx === 0}
+              onClick={() => {
+                const ids = items.map((i) => i.id);
+                [ids[idx - 1], ids[idx]] = [ids[idx], ids[idx - 1]];
+                void window.clipdeck.reorder(ids).then(onChanged);
+              }}
+            >
+              ↑
+            </button>
+            <button
+              className="card-btn visible"
+              title="Remove from stack"
+              onClick={() => void window.clipdeck.unstack(item.id).then(onChanged)}
+            >
+              <IconX />
+            </button>
+          </div>
+        ))}
+        {items.length === 0 && <div className="stack-empty">Stack is empty — press ⌘S on an item to queue it.</div>}
       </div>
+      <button
+        className="stack-paste"
+        disabled={items.length === 0}
+        onClick={() => void window.clipdeck.popStack().then(onChanged)}
+      >
+        Paste next ⏎
+      </button>
     </div>
   );
 }
@@ -158,6 +331,10 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(0);
   const [filter, setFilter] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [showStack, setShowStack] = useState(false);
+  const [stackItems, setStackItems] = useState<ClipItem[]>([]);
+  const dragFrom = useRef<number | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(() => {
@@ -165,6 +342,7 @@ export default function App() {
       setItems(filter === "pinned" ? list.filter((i) => i.pinned) : list);
     });
     void window.clipdeck.listPinboards().then(setPinboards);
+    void window.clipdeck.stackList().then(setStackItems);
   }, [query, filter]);
 
   useEffect(() => {
@@ -203,8 +381,17 @@ export default function App() {
     }
   };
 
+  const reorderTo = (from: number, to: number) => {
+    if (from === to || from < 0 || to < 0 || from >= items.length || to >= items.length) return;
+    const ids = items.map((i) => i.id);
+    const [moved] = ids.splice(from, 1);
+    ids.splice(to, 0, moved);
+    void window.clipdeck.reorder(ids).then(refresh);
+  };
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (editingId) return;
       if (e.key === "Escape") return void window.clipdeck.hide();
       if (e.key === "ArrowRight" || (e.key === "Tab" && !e.shiftKey)) {
         e.preventDefault();
@@ -223,6 +410,8 @@ export default function App() {
         void act("stack", items[selected]);
       } else if (e.key === "Delete" && items[selected]) {
         void act("delete", items[selected]);
+      } else if (e.key === "e" && items[selected] && !e.metaKey && !e.ctrlKey) {
+        setEditingId(items[selected].id);
       } else if ((e.metaKey || e.ctrlKey) && e.key === "f") {
         e.preventDefault();
         searchRef.current?.focus();
@@ -230,9 +419,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [items, selected]);
-
-  const stackCount = items.filter((i) => i.stackOrder !== null).length;
+  }, [items, selected, editingId]);
 
   return (
     <div className="sheet">
@@ -279,13 +466,13 @@ export default function App() {
               autoFocus
             />
             <div className="pills">
-              {stackCount > 0 && (
+              {stackItems.length > 0 && (
                 <button
-                  className="pill stack"
-                  title="Paste next from stack"
-                  onClick={() => void window.clipdeck.popStack()}
+                  className={"pill stack" + (showStack ? " active" : "")}
+                  title="Paste stack"
+                  onClick={() => setShowStack((v) => !v)}
                 >
-                  Stack ×{stackCount}
+                  Stack ×{stackItems.length}
                 </button>
               )}
               <button
@@ -317,11 +504,26 @@ export default function App() {
                 key={item.id}
                 item={item}
                 selected={idx === selected}
+                editing={editingId === item.id}
                 onSelect={() => setSelected(idx)}
                 onPaste={() => void act("paste", item)}
                 onCopy={() => void act("copy", item)}
                 onDelete={() => void act("delete", item)}
                 onPin={() => void act("pin", item)}
+                onEdit={() => setEditingId(editingId === item.id ? null : item.id)}
+                onSaveEdit={(content) => {
+                  void window.clipdeck.updateItem(item.id, { content }).then(() => {
+                    setEditingId(null);
+                    refresh();
+                  });
+                }}
+                onDragStart={() => {
+                  dragFrom.current = idx;
+                }}
+                onDrop={() => {
+                  if (dragFrom.current !== null) reorderTo(dragFrom.current, idx);
+                  dragFrom.current = null;
+                }}
               />
             ))}
           </div>
@@ -335,7 +537,10 @@ export default function App() {
               <kbd>⏎</kbd> paste
             </span>
             <span>
-              <kbd>⇧⏎</kbd> paste plain
+              <kbd>⇧⏎</kbd> plain
+            </span>
+            <span>
+              <kbd>E</kbd> edit
             </span>
             <span>
               <kbd>⌘C</kbd> copy
@@ -352,6 +557,10 @@ export default function App() {
           </div>
         </div>
       </div>
+
+      {showStack && (
+        <StackPanel items={stackItems} onClose={() => setShowStack(false)} onChanged={refresh} />
+      )}
     </div>
   );
 }

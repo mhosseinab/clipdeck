@@ -246,6 +246,124 @@ html, body, #root {
   color: var(--accent);
   background: rgba(143, 176, 255, 0.14);
 }
+.card-btn.grip { cursor: grab; }
+.card-btn.grip:active { cursor: grabbing; }
+.card-btn.visible { opacity: 1; }
+
+/* card edit mode */
+.card-edit {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 2px 10px 10px;
+  gap: 8px;
+  min-height: 0;
+}
+.card-edit textarea {
+  flex: 1;
+  width: 100%;
+  resize: none;
+  border-radius: 9px;
+  border: 1px solid var(--accent);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text);
+  font-family: "SF Mono", "JetBrains Mono", "Ubuntu Mono", monospace;
+  font-size: 11px;
+  padding: 8px;
+  outline: none;
+}
+.card-edit-actions { display: flex; gap: 6px; }
+.edit-save, .edit-cancel {
+  flex: 1;
+  height: 26px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+}
+.edit-save { background: var(--accent-strong); border-color: transparent; color: #fff; }
+.edit-cancel { background: rgba(255, 255, 255, 0.07); color: var(--text-dim); }
+
+/* syntax tokens */
+.tok-comment { color: #6b7394; font-style: italic; }
+.tok-string { color: #9ece6a; }
+.tok-keyword { color: #bb9af7; }
+.tok-number { color: #ff9e64; }
+
+/* favicon */
+.favicon-img {
+  width: 42px;
+  height: 42px;
+  border-radius: 11px;
+  object-fit: contain;
+  background: rgba(255, 255, 255, 0.92);
+  padding: 4px;
+}
+
+/* stack panel */
+.stack-panel {
+  position: absolute;
+  right: 22px;
+  top: 58px;
+  width: 320px;
+  max-height: 250px;
+  display: flex;
+  flex-direction: column;
+  background: rgba(22, 25, 38, 0.97);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+  z-index: 20;
+}
+.stack-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+}
+.stack-head span { flex: 1; }
+.stack-list { flex: 1; overflow-y: auto; padding: 6px; min-height: 60px; }
+.stack-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  font-size: 11.5px;
+}
+.stack-row:hover { background: rgba(255, 255, 255, 0.06); }
+.stack-idx {
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  background: rgba(143, 176, 255, 0.16);
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9.5px;
+  font-weight: 700;
+  flex: 0 0 18px;
+}
+.stack-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stack-empty { padding: 16px; text-align: center; color: var(--text-dim); font-size: 11.5px; }
+.stack-paste {
+  margin: 8px;
+  height: 30px;
+  border-radius: 9px;
+  border: none;
+  background: var(--accent-strong);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.stack-paste:disabled { opacity: 0.4; cursor: default; }
 
 /* ---------- card previews ---------- */
 .card-preview {
@@ -410,6 +528,39 @@ kbd {
   gap: 16px;
 }
 .settings-page .row span { font-size: 13px; }
+.settings-page .column {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.settings-page .column span { font-size: 12.5px; color: var(--text-dim); line-height: 1.5; }
+.settings-page code {
+  background: rgba(255, 255, 255, 0.08);
+  padding: 1px 5px;
+  border-radius: 5px;
+  font-size: 11px;
+}
+.settings-page button {
+  background: rgba(143, 176, 255, 0.14);
+  color: var(--accent);
+  border: 1px solid rgba(143, 176, 255, 0.35);
+  border-radius: 8px;
+  padding: 7px 14px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.settings-page button:hover { background: rgba(143, 176, 255, 0.24); }
+.btn-group { display: flex; gap: 8px; }
+.status-line {
+  margin-top: 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(122, 224, 178, 0.1);
+  color: #7ae0b2;
+  font-size: 12px;
+}
 .settings-page input[type="number"],
 .settings-page input[type="text"],
 .settings-page input:not([type]),

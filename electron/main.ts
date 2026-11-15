@@ -1,21 +1,29 @@
 import {
   app,
   BrowserWindow,
+  dialog,
   globalShortcut,
   ipcMain,
   Menu,
   nativeImage,
   screen,
   Tray,
-  clipboard,
 } from "electron";
 import path from "node:path";
 import fs from "node:fs";
 import zlib from "node:zlib";
 import { Store, type ClipItem, type Settings } from "./store";
 import { ClipboardWatcher, frontmostApp, simulatePaste, writeToClipboard } from "./clipboard";
+import { runHooks } from "./hooks";
+import { SyncStore } from "./sync";
+
+// Test/dev hook: run a parallel instance without touching the real profile.
+if (process.env.CLIPDECK_USER_DATA) {
+  app.setPath("userData", process.env.CLIPDECK_USER_DATA);
+}
 
 let store: Store;
+let sync: SyncStore;
 let watcher: ClipboardWatcher;
 let overlay: BrowserWindow | null = null;
 let settingsWin: BrowserWindow | null = null;
@@ -73,6 +81,11 @@ function makeIcon(): Electron.NativeImage {
 
 /* ---------- windows ---------- */
 
+function applyScreenShare(): void {
+  if (!overlay) return;
+  overlay.setContentProtection(!store.settings().showInScreenShare);
+}
+
 function createOverlay(): void {
   const { width, height } = screen.getPrimaryDisplay().workAreaSize;
   overlay = new BrowserWindow({
@@ -97,6 +110,7 @@ function createOverlay(): void {
     },
   });
   overlay.on("blur", () => overlay?.hide());
+  applyScreenShare();
   const dev = process.env.VITE_DEV_SERVER_URL;
   void overlay.loadURL(dev ?? `file://${path.join(__dirname, "../dist/index.html")}`);
 }
@@ -129,8 +143,8 @@ function createSettingsWindow(): void {
     return;
   }
   settingsWin = new BrowserWindow({
-    width: 560,
-    height: 480,
+    width: 600,
+    height: 560,
     frame: true,
     autoHideMenuBar: true,
     webPreferences: {
@@ -148,23 +162,45 @@ function createSettingsWindow(): void {
 /* ---------- tray ---------- */
 
 function createTray(): void {
-  tray = new Tray(makeIcon());
+  if (!tray) tray = new Tray(makeIcon());
   tray.setToolTip("ClipDeck");
-  const rebuild = () => {
-    tray?.setContextMenu(
-      Menu.buildFromTemplate([
-        { label: "Open ClipDeck", click: () => showOverlay() },
-        { label: watching ? "Pause watching" : "Resume watching", click: toggleWatching },
-        { type: "separator" },
-        { label: "Settings…", click: () => createSettingsWindow() },
-        { label: "Clear history", click: () => { store.clearHistory(); overlay?.webContents.send("items-changed"); } },
-        { type: "separator" },
-        { label: "Quit", click: () => app.quit() },
-      ]),
-    );
-  };
-  rebuild();
+  const recents = store.recentItems(8).map((item) => ({
+    label: (item.title || item.preview || item.type).slice(0, 42),
+    click: () => {
+      writeToClipboard(item, store);
+      if (store.settings().soundCopy) overlay?.webContents.send("play-sound", "copy");
+    },
+  }));
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: "Open ClipDeck", click: () => showOverlay() },
+      { label: watching ? "Pause watching" : "Resume watching", click: toggleWatching },
+      ...(recents.length
+        ? [{ type: "separator" as const }, { label: "Recent", enabled: false }, ...recents]
+        : []),
+      { type: "separator" },
+      { label: "Settings…", click: () => createSettingsWindow() },
+      {
+        label: "Clear history",
+        click: () => {
+          store.clearHistory();
+          overlay?.webContents.send("items-changed");
+        },
+      },
+      { type: "separator" },
+      { label: "Quit", click: () => app.quit() },
+    ]),
+  );
   tray.on("click", () => showOverlay());
+}
+
+let trayRefreshTimer: NodeJS.Timeout | null = null;
+function scheduleTrayRefresh(): void {
+  if (trayRefreshTimer) return;
+  trayRefreshTimer = setTimeout(() => {
+    trayRefreshTimer = null;
+    if (tray) createTray();
+  }, 1000);
 }
 
 function toggleWatching(): void {
@@ -172,7 +208,33 @@ function toggleWatching(): void {
   store.setSettings({ watchEnabled: watching });
   if (watching) watcher.start();
   else watcher.stop();
-  if (tray) createTray();
+  createTray();
+}
+
+/* ---------- updates (scaffold) ---------- */
+
+function checkUpdates(): Promise<string> {
+  if (!app.isPackaged) return Promise.resolve("Update checks run in packaged builds only.");
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { autoUpdater } = require("electron-updater") as typeof import("electron-updater");
+    autoUpdater.autoDownload = false;
+    return new Promise((resolve) => {
+      const done = (msg: string) => {
+        autoUpdater.removeAllListeners();
+        resolve(msg);
+      };
+      autoUpdater.once("update-available", (info: { version?: string }) =>
+        done(`Update available: v${info?.version ?? "?"}`),
+      );
+      autoUpdater.once("update-not-available", () => done("You are on the latest version."));
+      autoUpdater.once("error", (e: Error) => done("Update check failed: " + e.message));
+      setTimeout(() => done("Update check timed out."), 15000);
+      void autoUpdater.checkForUpdates();
+    });
+  } catch {
+    return Promise.resolve("Updater unavailable.");
+  }
 }
 
 /* ---------- IPC ---------- */
@@ -194,19 +256,27 @@ function wireIpc(): void {
   });
   ipcMain.handle("items:copy", (_e, id: string) => {
     const item = store.find(id);
-    if (item) writeToClipboard(item, store);
-    return item ?? null;
+    if (!item) return null;
+    writeToClipboard(item, store);
+    runHooks("copy", item, store.settings());
+    return item;
   });
   ipcMain.handle("items:paste", async (_e, id: string, plainText?: boolean) => {
     const item = store.find(id);
     if (!item) return false;
-    writeToClipboard(item, store, plainText ?? store.settings().pasteAsPlainText);
+    const s = store.settings();
+    const rulePlain =
+      lastApp != null &&
+      s.plainTextApps.some((a) => a && lastApp!.toLowerCase().includes(a.toLowerCase()));
+    writeToClipboard(item, store, plainText ?? (s.pasteAsPlainText || rulePlain));
+    runHooks("paste", item, s);
     hideOverlay();
     await new Promise((r) => setTimeout(r, 60));
     return simulatePaste();
   });
   ipcMain.handle("items:delete", (_e, id: string) => {
     store.remove(id);
+    scheduleTrayRefresh();
     return true;
   });
   ipcMain.handle("items:pin", (_e, id: string, pinned: boolean) => {
@@ -217,6 +287,7 @@ function wireIpc(): void {
   });
   ipcMain.handle("items:reorder", (_e, ids: string[]) => {
     store.reorder(ids);
+    scheduleTrayRefresh();
     return true;
   });
   ipcMain.handle("items:pushStack", (_e, id: string) => {
@@ -224,15 +295,32 @@ function wireIpc(): void {
     return store.update(id, { stackOrder: stackLen + 1 });
   });
   ipcMain.handle("items:popStack", async () => {
-    const queued = store.items().filter((i) => i.stackOrder !== null).sort((a, b) => (a.stackOrder ?? 0) - (b.stackOrder ?? 0));
+    const queued = store
+      .items()
+      .filter((i) => i.stackOrder !== null)
+      .sort((a, b) => (a.stackOrder ?? 0) - (b.stackOrder ?? 0));
     const next = store.settings().stackDirection === "lifo" ? queued[queued.length - 1] : queued[0];
     if (!next) return null;
     writeToClipboard(next, store);
+    runHooks("paste", next, store.settings());
     hideOverlay();
     await new Promise((r) => setTimeout(r, 60));
     await simulatePaste();
     store.remove(next.id);
     return next;
+  });
+  ipcMain.handle("items:stackList", () =>
+    store
+      .items()
+      .filter((i) => i.stackOrder !== null)
+      .sort((a, b) => (a.stackOrder ?? 0) - (b.stackOrder ?? 0)),
+  );
+  ipcMain.handle("items:unstack", (_e, id: string) => store.update(id, { stackOrder: null }));
+  ipcMain.handle("items:clearStack", () => {
+    for (const i of store.items().filter((x) => x.stackOrder !== null)) {
+      store.update(i.id, { stackOrder: null });
+    }
+    return true;
   });
   ipcMain.handle("pinboards:list", () => store.pinboards());
   ipcMain.handle("pinboards:add", (_e, name: string) => store.addPinboard(name));
@@ -242,18 +330,24 @@ function wireIpc(): void {
   });
   ipcMain.handle("settings:get", () => store.settings());
   ipcMain.handle("settings:set", (_e, patch: Partial<Settings>) => {
+    const before = store.settings();
     const s = store.setSettings(patch);
     if (patch.watchEnabled !== undefined) {
       watching = s.watchEnabled;
       if (watching) watcher.start();
       else watcher.stop();
     }
+    if (patch.syncDirectory !== undefined && patch.syncDirectory !== before.syncDirectory) {
+      sync.reconfigure();
+    }
+    if (patch.showInScreenShare !== undefined) applyScreenShare();
     return s;
   });
   ipcMain.handle("app:hide", () => hideOverlay());
   ipcMain.handle("app:openSettings", () => createSettingsWindow());
   ipcMain.handle("app:clearHistory", () => {
     store.clearHistory();
+    scheduleTrayRefresh();
     return true;
   });
   ipcMain.handle("app:info", () => ({
@@ -261,6 +355,32 @@ function wireIpc(): void {
     lastApp,
     version: app.getVersion(),
   }));
+  ipcMain.handle("app:export", async () => {
+    const win = BrowserWindow.getFocusedWindow() ?? undefined;
+    const { canceled, filePath } = await dialog.showSaveDialog(win ?? settingsWin ?? overlay!, {
+      defaultPath: "clipdeck-export.json",
+      filters: [{ name: "ClipDeck export", extensions: ["json"] }],
+    });
+    if (canceled || !filePath) return null;
+    fs.writeFileSync(filePath, store.exportJSON());
+    return filePath;
+  });
+  ipcMain.handle("app:import", async () => {
+    const win = BrowserWindow.getFocusedWindow() ?? undefined;
+    const { canceled, filePaths } = await dialog.showOpenDialog(win ?? settingsWin ?? overlay!, {
+      filters: [{ name: "ClipDeck export", extensions: ["json"] }],
+      properties: ["openFile"],
+    });
+    if (canceled || !filePaths[0]) return null;
+    try {
+      const result = store.importJSON(fs.readFileSync(filePaths[0], "utf8"));
+      scheduleTrayRefresh();
+      return result;
+    } catch {
+      return null;
+    }
+  });
+  ipcMain.handle("app:checkUpdates", () => checkUpdates());
   ipcMain.handle("image:dataUrl", (_e, file: string) => {
     const safe = path.basename(file);
     const p = path.join(store.images, safe);
@@ -271,7 +391,44 @@ function wireIpc(): void {
       return null;
     }
   });
+  ipcMain.handle("link:favicon", async (_e, url: string) => {
+    if (!store.settings().generateLinkPreviews) return null;
+    try {
+      const u = new URL(url);
+      const key = u.origin;
+      const cached = faviconCache.get(key);
+      if (cached !== undefined) return cached;
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 4000);
+      const res = await fetch(u.origin + "/favicon.ico", {
+        signal: ctrl.signal,
+        redirect: "follow",
+      }).catch(() => null);
+      clearTimeout(timer);
+      let dataUrl: string | null = null;
+      if (res?.ok) {
+        const type = res.headers.get("content-type") || "image/x-icon";
+        const buf = Buffer.from(await res.arrayBuffer());
+        if (buf.length > 0 && buf.length < 512 * 1024) {
+          dataUrl = `data:${type};base64,${buf.toString("base64")}`;
+        }
+      }
+      faviconCache.set(key, dataUrl);
+      return dataUrl;
+    } catch {
+      return null;
+    }
+  });
+  ipcMain.on("drag:start", (e, file: string) => {
+    const inImages = path.dirname(path.resolve(file)) === path.resolve(store.images);
+    const inStore = store.items().some((i) => i.content.split("\n").includes(file));
+    if ((inImages || inStore) && fs.existsSync(file)) {
+      e.sender.startDrag({ file: path.resolve(file), icon: makeIcon() });
+    }
+  });
 }
+
+const faviconCache = new Map<string, string | null>();
 
 /* ---------- lifecycle ---------- */
 
@@ -281,8 +438,11 @@ if (!gotLock) {
 } else {
   app.whenReady().then(() => {
     store = new Store(app.getPath("userData"));
+    sync = new SyncStore(store);
     watching = store.settings().watchEnabled;
-    watcher = new ClipboardWatcher(store, () => {
+    watcher = new ClipboardWatcher(store, (item) => {
+      sync.append(item);
+      scheduleTrayRefresh();
       overlay?.webContents.send("items-changed");
       if (store.settings().soundCopy) overlay?.webContents.send("play-sound", "copy");
     });
@@ -291,6 +451,10 @@ if (!gotLock) {
     createOverlay();
     createTray();
     wireIpc();
+
+    setInterval(() => {
+      if (sync.merge() > 0) overlay?.webContents.send("items-changed");
+    }, 30000);
 
     try {
       globalShortcut.register(store.settings().shortcut, () => {

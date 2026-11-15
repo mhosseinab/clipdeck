@@ -11,6 +11,9 @@ export interface ClipDeckApi {
   reorder(ids: string[]): Promise<boolean>;
   pushStack(id: string): Promise<ClipItem | null>;
   popStack(): Promise<ClipItem | null>;
+  stackList(): Promise<ClipItem[]>;
+  unstack(id: string): Promise<ClipItem | null>;
+  clearStack(): Promise<boolean>;
   listPinboards(): Promise<{ id: string; name: string; icon: string; position: number }[]>;
   addPinboard(name: string): Promise<{ id: string; name: string; icon: string; position: number }>;
   removePinboard(id: string): Promise<boolean>;
@@ -20,7 +23,12 @@ export interface ClipDeckApi {
   openSettings(): Promise<void>;
   clearHistory(): Promise<boolean>;
   appInfo(): Promise<{ platform: string; lastApp: string | null; version: string }>;
+  exportHistory(): Promise<string | null>;
+  importHistory(): Promise<{ imported: number; skipped: number } | null>;
+  checkUpdates(): Promise<string>;
   getImage(file: string): Promise<string | null>;
+  getFavicon(url: string): Promise<string | null>;
+  startDrag(file: string): void;
   onItemsChanged(cb: () => void): () => void;
   onPlaySound(cb: (kind: "copy" | "paste") => void): () => void;
 }
@@ -35,6 +43,9 @@ const api: ClipDeckApi = {
   reorder: (ids) => ipcRenderer.invoke("items:reorder", ids),
   pushStack: (id) => ipcRenderer.invoke("items:pushStack", id),
   popStack: () => ipcRenderer.invoke("items:popStack"),
+  stackList: () => ipcRenderer.invoke("items:stackList"),
+  unstack: (id) => ipcRenderer.invoke("items:unstack", id),
+  clearStack: () => ipcRenderer.invoke("items:clearStack"),
   listPinboards: () => ipcRenderer.invoke("pinboards:list"),
   addPinboard: (name) => ipcRenderer.invoke("pinboards:add", name),
   removePinboard: (id) => ipcRenderer.invoke("pinboards:remove", id),
@@ -44,7 +55,12 @@ const api: ClipDeckApi = {
   openSettings: () => ipcRenderer.invoke("app:openSettings"),
   clearHistory: () => ipcRenderer.invoke("app:clearHistory"),
   appInfo: () => ipcRenderer.invoke("app:info"),
-  getImage: (file: string) => ipcRenderer.invoke("image:dataUrl", file),
+  exportHistory: () => ipcRenderer.invoke("app:export"),
+  importHistory: () => ipcRenderer.invoke("app:import"),
+  checkUpdates: () => ipcRenderer.invoke("app:checkUpdates"),
+  getImage: (file) => ipcRenderer.invoke("image:dataUrl", file),
+  getFavicon: (url) => ipcRenderer.invoke("link:favicon", url),
+  startDrag: (file) => ipcRenderer.send("drag:start", file),
   onItemsChanged: (cb) => {
     const h = () => cb();
     ipcRenderer.on("items-changed", h);
