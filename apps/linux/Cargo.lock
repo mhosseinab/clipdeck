@@ -331,7 +331,7 @@ dependencies = [
 
 [[package]]
 name = "clipdeck-app"
-version = "2.1.0"
+version = "2.1.1"
 dependencies = [
  "arboard",
  "clipdeck-core",
@@ -351,7 +351,7 @@ dependencies = [
 
 [[package]]
 name = "clipdeck-core"
-version = "2.1.0"
+version = "2.1.1"
 dependencies = [
  "chacha20poly1305",
  "hkdf",
@@ -364,7 +364,7 @@ dependencies = [
 
 [[package]]
 name = "clipdeck-spec"
-version = "2.1.0"
+version = "2.1.1"
 dependencies = [
  "serde_json",
  "url",

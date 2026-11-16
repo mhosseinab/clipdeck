@@ -1,0 +1,49 @@
+name: Package candidates
+
+on:
+  workflow_dispatch:
+
+# Build artifacts only; publishing stays a separate reviewed operation.
+permissions:
+  contents: read
+
+jobs:
+  packages:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install build and validation tools
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config desktop-file-utils appstream
+      - name: Install Debian packaging helper
+        run: cargo install cargo-deb --version 3.8.0 --locked
+      - name: Test and build native Debian package and tarball
+        env:
+          # Keep compiled Cargo output out of the source copied into LXD.
+          CARGO_TARGET_DIR: ${{ runner.temp }}/clipdeck-native-target
+        run: bash scripts/package.sh
+      - name: Build and test native Snap
+        id: snap
+        uses: canonical/action-build@3bdaa03e1ba6bf59a65f84a751d943d549a54e79 # v1
+        with:
+          snapcraft-args: --platform ${{ matrix.arch }}
+      - name: Retain checked package artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: clipdeck-${{ matrix.arch }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            dist/candidate/*.deb
+            dist/candidate/*.tar.gz
+            dist/candidate/SHA256SUMS
+            ${{ steps.snap.outputs.snap }}
