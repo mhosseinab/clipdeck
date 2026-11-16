@@ -62,6 +62,20 @@ requirements. The normal overlay size remains 1240×372.
 
 ## Local validation
 
+The 2.1.2 amd64 Snap was built locally in Ubuntu 24.04 LXD. All 149 workspace
+tests and 244 contract checks passed; the exact packaged binary passed isolated
+Unicode roundtrip and frame pixel checks, including the three-dot card control.
+Both native Debian application builds passed the same tests in
+[the package workflow](https://github.com/mhosseinab/clipdeck/actions/runs/43902186015).
+That workflow's Snap setup hit Store connectivity failures while installing LXD.
+The ARM64 Snap was assembled with `snap pack` from its tested native Ubuntu 24.04
+binary and the unchanged runtime from the verified 2.1.1 ARM64 Snap. Runtime files
+were compared byte-for-byte, shared-library requirements did not expand, and
+the binary's glibc requirements fit core24. The package includes build provenance.
+Both packages include font and text-library license notices and passed Store
+review: stable revisions 6 (amd64) and 7 (ARM64). Physical ARM64 desktop testing
+remains unverified.
+
 The 2.1.1 candidates were built on native Ubuntu 24.04 amd64 and ARM64 runners
 in [the package workflow](https://github.com/mhosseinab/clipdeck/actions/runs/43814561270).
 Both the Deb and Snap builds passed all 244 contract checks and 142 workspace
