@@ -75,4 +75,5 @@ parts:
       install -Dm644 crates/app/assets/io.github.mhosseinab.clipdeck.desktop "$CRAFT_PART_INSTALL/usr/share/applications/io.github.mhosseinab.clipdeck.desktop"
       install -Dm644 crates/app/assets/icon.png "$CRAFT_PART_INSTALL/usr/share/icons/hicolor/256x256/apps/io.github.mhosseinab.clipdeck.png"
       install -Dm644 crates/app/assets/fonts/OFL-NotoSansArabic.txt "$CRAFT_PART_INSTALL/usr/share/doc/clipdeck/OFL-NotoSansArabic.txt"
+      install -Dm644 crates/app/THIRD-PARTY-TEXT-LICENSES.txt "$CRAFT_PART_INSTALL/usr/share/doc/clipdeck/THIRD-PARTY-TEXT-LICENSES.txt"
       install -Dm644 ../../LICENSE "$CRAFT_PART_INSTALL/usr/share/doc/clipdeck/LICENSE"

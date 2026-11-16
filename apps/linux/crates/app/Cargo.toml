@@ -45,4 +45,5 @@ assets = [
     ["assets/icon.png", "usr/share/icons/hicolor/256x256/apps/io.github.mhosseinab.clipdeck.png", "644"],
     ["assets/io.github.mhosseinab.clipdeck.metainfo.xml", "usr/share/metainfo/", "644"],
     ["assets/fonts/OFL-NotoSansArabic.txt", "usr/share/doc/clipdeck/OFL-NotoSansArabic.txt", "644"],
+    ["THIRD-PARTY-TEXT-LICENSES.txt", "usr/share/doc/clipdeck/THIRD-PARTY-TEXT-LICENSES.txt", "644"],
 ]

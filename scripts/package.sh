@@ -25,6 +25,7 @@ appstreamcli validate --no-net --strict "$stage/payload/usr/share/metainfo/$app_
 appstreamcli validate-tree --no-net --strict "$stage/payload"
 [[ -f "$stage/payload/usr/share/doc/clipdeck/copyright" ]]
 [[ -f "$stage/payload/usr/share/doc/clipdeck/OFL-NotoSansArabic.txt" ]]
+[[ -f "$stage/payload/usr/share/doc/clipdeck/THIRD-PARTY-TEXT-LICENSES.txt" ]]
 version="$(dpkg-deb --field "$stage/clipdeck.deb" Version)"
 arch="$(dpkg-deb --field "$stage/clipdeck.deb" Architecture)"
 [[ "$("$binary" --version)" == "ClipDeck ${version%-*}" ]]
