@@ -20,6 +20,9 @@ wayland-client = "0.31.15"
 smithay-client-toolkit = { version = "0.19.2", default-features = false }
 tiny-skia = "0.11"
 fontdue = "0.9"
+rustybuzz = "0.20.1"
+unicode-bidi = "0.3.18"
+unicode-segmentation = "1.13"
 global-hotkey = "0.6"
 png = "0.17"
 sha2 = "0.10"
@@ -41,5 +44,5 @@ assets = [
     ["assets/io.github.mhosseinab.clipdeck.desktop", "usr/share/applications/", "644"],
     ["assets/icon.png", "usr/share/icons/hicolor/256x256/apps/io.github.mhosseinab.clipdeck.png", "644"],
     ["assets/io.github.mhosseinab.clipdeck.metainfo.xml", "usr/share/metainfo/", "644"],
-    ["assets/fonts/OFL.txt", "usr/share/doc/clipdeck/OFL-Roboto.txt", "644"],
+    ["assets/fonts/OFL-NotoSansArabic.txt", "usr/share/doc/clipdeck/OFL-NotoSansArabic.txt", "644"],
 ]

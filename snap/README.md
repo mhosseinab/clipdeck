@@ -4,8 +4,8 @@ From the repository root, with Snapcraft and an initialized LXD build provider:
 
 ```sh
 mkdir -p dist
-snapcraft pack --platform amd64 --output dist/clipdeck_2.1.1_amd64.snap
-sudo snap install --dangerous ./dist/clipdeck_2.1.1_amd64.snap
+snapcraft pack --platform amd64 --output dist/clipdeck_2.1.2_amd64.snap
+sudo snap install --dangerous ./dist/clipdeck_2.1.2_amd64.snap
 sudo snap connect clipdeck:password-manager-service
 ```
 

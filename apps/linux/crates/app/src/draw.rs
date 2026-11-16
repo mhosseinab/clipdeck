@@ -3,6 +3,8 @@
 
 use fontdue::Font;
 use tiny_skia::{FillRule, Paint, PathBuilder, Pixmap, PremultipliedColorU8, Transform};
+use unicode_bidi::BidiInfo;
+use unicode_segmentation::UnicodeSegmentation;
 
 /// Visual-center baseline bias (verified against frame dumps).
 const CENTER_BIAS: f32 = 0.345;
@@ -11,6 +13,7 @@ const CENTER_BIAS: f32 = 0.345;
 pub const LINE_ADVANCE: f32 = 1.55;
 
 #[derive(Clone, Copy)]
+/// Existing text roles all use the single bundled Noto Sans Arabic face.
 pub enum Face {
     Regular,
     Medium,
@@ -20,48 +23,111 @@ pub enum Face {
 #[derive(Clone)]
 pub struct Fonts {
     pub regular: Font,
-    pub medium: Font,
-    pub mono: Font,
+    shaper: rustybuzz::Face<'static>,
 }
 
-const ROBOTO_REGULAR: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/fonts/Roboto-Regular.ttf"));
-const ROBOTO_MEDIUM: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/fonts/Roboto-Medium.ttf"));
-const ROBOTO_MONO: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/fonts/RobotoMono-Regular.ttf"));
+const NOTO_SANS_ARABIC: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/fonts/NotoSansArabic.ttf"));
 
-fn parse(bytes: &'static [u8]) -> Font {
-    Font::from_bytes(bytes.to_vec(), fontdue::FontSettings::default()).expect("bundled font")
+enum TextGlyph {
+    Font(u16),
+    Key(char),
+}
+
+struct PositionedGlyph {
+    glyph: TextGlyph,
+    x: f32,
+    y: f32,
+}
+
+struct TextLayout {
+    glyphs: Vec<PositionedGlyph>,
+    width: f32,
+    rtl: bool,
 }
 
 impl Fonts {
     pub fn bundled() -> Fonts {
-        Fonts { regular: parse(ROBOTO_REGULAR), medium: parse(ROBOTO_MEDIUM), mono: parse(ROBOTO_MONO) }
-    }
-
-    fn font(&self, face: Face) -> &Font {
-        match face {
-            Face::Regular => &self.regular,
-            Face::Medium => &self.medium,
-            Face::Mono => &self.mono,
+        Fonts {
+            regular: Font::from_bytes(NOTO_SANS_ARABIC, fontdue::FontSettings::default()).expect("bundled font"),
+            shaper: rustybuzz::Face::from_slice(NOTO_SANS_ARABIC, 0).expect("bundled shaping font"),
         }
     }
 
-    pub fn width(&self, px: f32, s: &str, face: Face) -> f32 {
-        s.chars().map(|c| if is_key_symbol(c) { px } else { self.font(face).metrics(c, px).advance_width }).sum()
+    /// Resolve visual runs without reversing source text, then shape complete
+    /// runs so joining, ligatures, marks and mixed-direction numbers stay intact.
+    fn layout(&self, px: f32, text: &str) -> TextLayout {
+        self.layout_with_direction(px, text, None)
+    }
+
+    fn layout_with_direction(&self, px: f32, text: &str, direction: Option<unicode_bidi::Level>) -> TextLayout {
+        let bidi = BidiInfo::new(text, direction);
+        let mut layout = TextLayout {
+            glyphs: Vec::new(), width: 0.0,
+            rtl: bidi.paragraphs.first().is_some_and(|p| p.level.is_rtl()),
+        };
+        let scale = px / self.shaper.units_per_em() as f32;
+        for paragraph in &bidi.paragraphs {
+            let (levels, runs) = bidi.visual_runs(paragraph, paragraph.range.clone());
+            for run in runs {
+                let rtl = levels[run.start].is_rtl();
+                // Keep the existing vector keyboard symbols out of font shaping.
+                let mut segments = Vec::new();
+                let mut start = run.start;
+                for (offset, ch) in text[run.clone()].char_indices() {
+                    if is_key_symbol(ch) {
+                        let index = run.start + offset;
+                        if start < index { segments.push((start..index, None)); }
+                        segments.push((index..index + ch.len_utf8(), Some(ch)));
+                        start = index + ch.len_utf8();
+                    }
+                }
+                if start < run.end { segments.push((start..run.end, None)); }
+                if rtl { segments.reverse(); }
+                for (range, symbol) in segments {
+                    if let Some(ch) = symbol {
+                        layout.glyphs.push(PositionedGlyph { glyph: TextGlyph::Key(ch), x: layout.width, y: 0.0 });
+                        layout.width += px;
+                        continue;
+                    }
+                    let mut buffer = rustybuzz::UnicodeBuffer::new();
+                    buffer.push_str(&text[range]);
+                    buffer.set_direction(if rtl { rustybuzz::Direction::RightToLeft } else { rustybuzz::Direction::LeftToRight });
+                    buffer.guess_segment_properties();
+                    let shaped = rustybuzz::shape(&self.shaper, &[], buffer);
+                    for (info, position) in shaped.glyph_infos().iter().zip(shaped.glyph_positions()) {
+                        layout.glyphs.push(PositionedGlyph {
+                            glyph: TextGlyph::Font(info.glyph_id as u16),
+                            x: layout.width + position.x_offset as f32 * scale,
+                            y: position.y_offset as f32 * scale,
+                        });
+                        layout.width += position.x_advance as f32 * scale;
+                    }
+                }
+            }
+        }
+        layout
+    }
+
+    pub fn width(&self, px: f32, s: &str, _face: Face) -> f32 {
+        self.layout(px, s).width
     }
 
     /// Draw with `baseline` as the text baseline.
-    pub fn text(&self, pm: &mut Pixmap, x: f32, baseline: f32, px: f32, s: &str, face: Face, color: [u8; 4]) {
-        let font = self.font(face);
-        let mut pen = x;
-        for ch in s.chars() {
-            if is_key_symbol(ch) {
-                key_symbol(pm, pen, baseline - px * 0.75, px, ch, color);
-                pen += px;
-                continue;
+    pub fn text(&self, pm: &mut Pixmap, x: f32, baseline: f32, px: f32, s: &str, _face: Face, color: [u8; 4]) {
+        self.draw_layout(pm, x, baseline, px, self.layout(px, s), color);
+    }
+
+    fn draw_layout(&self, pm: &mut Pixmap, x: f32, baseline: f32, px: f32, layout: TextLayout, color: [u8; 4]) {
+        for glyph in layout.glyphs {
+            match glyph.glyph {
+                TextGlyph::Key(ch) => key_symbol(pm, x + glyph.x, baseline - px * 0.75, px, ch, color),
+                TextGlyph::Font(id) => {
+                    let (m, bitmap) = self.regular.rasterize_indexed(id, px);
+                    blit(pm, (x + glyph.x + m.xmin as f32) as i32,
+                        (baseline - glyph.y - m.ymin as f32 - m.height as f32) as i32,
+                        m.width, m.height, &bitmap, color);
+                }
             }
-            let (m, bitmap) = font.rasterize(ch, px);
-            blit(pm, (pen + m.xmin as f32) as i32, (baseline - m.ymin as f32 - m.height as f32) as i32, m.width, m.height, &bitmap, color);
-            pen += m.advance_width;
         }
     }
 
@@ -97,11 +163,11 @@ impl Fonts {
                     continue;
                 }
                 let mut chunk = String::new();
-                for ch in w.chars() {
-                    if !chunk.is_empty() && measure(&format!("{chunk}{ch}")) > max_w {
+                for grapheme in w.graphemes(true) {
+                    if !chunk.is_empty() && measure(&format!("{chunk}{grapheme}")) > max_w {
                         words.push(std::mem::take(&mut chunk));
                     }
-                    chunk.push(ch);
+                    chunk.push_str(grapheme);
                 }
                 if !chunk.is_empty() {
                     words.push(chunk);
@@ -132,12 +198,22 @@ impl Fonts {
         out
     }
 
-    /// Word-wrapped paragraph text honoring `\n`; `mono` selects the mono face.
+    /// Word-wrapped text honoring paragraph direction and explicit newlines.
     pub fn wrap_lines(&self, pm: &mut Pixmap, x: f32, y: f32, max_w: f32, px: f32, s: &str, face: Face, max_lines: usize) {
         let mut ly = y;
-        for line in self.layout_lines(max_w, px, s, face, max_lines) {
-            self.text(pm, x, ly + px, px, &line, face, rgba(238, 240, 246, 220));
-            ly += px * LINE_ADVANCE;
+        let mut remaining = max_lines;
+        for paragraph in s.split('\n') {
+            if remaining == 0 { break; }
+            let bidi = BidiInfo::new(paragraph, None);
+            let direction = bidi.paragraphs.first().map(|p| p.level);
+            let lines = self.layout_lines(max_w, px, paragraph, face, remaining);
+            remaining -= lines.len();
+            for line in lines {
+                let layout = self.layout_with_direction(px, &line, direction);
+                let left = if layout.rtl { x + (max_w - layout.width).max(0.0) } else { x };
+                self.draw_layout(pm, left, ly + px, px, layout, rgba(238, 240, 246, 220));
+                ly += px * LINE_ADVANCE;
+            }
         }
     }
 }
@@ -237,6 +313,12 @@ fn blit(pm: &mut Pixmap, x: i32, y: i32, w: usize, h: usize, cov: &[u8], color: 
 }
 
 /* ---------- vector icons ---------- */
+
+pub fn icon_more_vertical(pm: &mut Pixmap, cx: f32, cy: f32, c: [u8; 4]) {
+    for offset in [-4.0, 0.0, 4.0] {
+        round_rect(pm, cx - 1.1, cy + offset - 1.1, 2.2, 2.2, 1.1, c);
+    }
+}
 
 pub fn icon_x(pm: &mut Pixmap, cx: f32, cy: f32, r: f32, c: [u8; 4]) {
     line(pm, cx - r, cy - r, cx + r, cy + r, c);
@@ -486,6 +568,88 @@ mod tests {
         let bytes: usize = cache.images.values().filter_map(|entry| entry.pixmap.as_ref()).map(|pixmap| pixmap.data().len()).sum();
         assert!(bytes <= 8 * 1024 * 1024, "decoded images exceed the cache byte budget: {bytes}");
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn persian_letters_render_distinct_glyphs_in_every_face() {
+        let fonts = Fonts::bundled();
+        for face in [Face::Regular, Face::Medium, Face::Mono] {
+            let render = |text: &str| {
+                let mut pm = Pixmap::new(80, 40).unwrap();
+                fonts.text(&mut pm, 4.0, 28.0, 20.0, text, face, rgba(255,255,255,255));
+                pm.data().to_vec()
+            };
+            assert_ne!(render("س"), render("م"), "Persian letters must not share the missing-glyph box");
+            assert_ne!(render("ی"), render("\u{10ffff}"), "Persian yeh needs a real glyph");
+        }
+    }
+
+    #[test]
+    fn persian_words_are_shaped_instead_of_drawn_as_isolated_characters() {
+        let fonts = Fonts::bundled();
+        let mut joined = Pixmap::new(160, 50).unwrap();
+        let mut isolated = joined.clone();
+        fonts.text(&mut joined, 4.0, 32.0, 24.0, "سلام", Face::Regular, rgba(255,255,255,255));
+        let mut x = 4.0;
+        for ch in "سلام".chars() {
+            let text = ch.to_string();
+            fonts.text(&mut isolated, x, 32.0, 24.0, &text, Face::Regular, rgba(255,255,255,255));
+            x += fonts.width(24.0, &text, Face::Regular);
+        }
+        assert_ne!(joined.data(), isolated.data(), "Arabic-script text needs contextual shaping and RTL ordering");
+    }
+
+    #[test]
+    fn wrapped_persian_text_is_aligned_to_the_right_edge() {
+        let fonts = Fonts::bundled();
+        let mut pm = Pixmap::new(220, 80).unwrap();
+        fonts.wrap_lines(&mut pm, 10.0, 10.0, 200.0, 18.0, "سلام دنیا", Face::Regular, 2);
+        let ink: Vec<_> = pm.pixels().iter().enumerate().filter(|(_, p)| p.alpha() > 0)
+            .map(|(i, _)| (i % 220, i / 220)).collect();
+        assert!(!ink.is_empty());
+        assert!(ink.iter().all(|(x, y)| *x >= 10 && *x < 210 && *y >= 10 && *y < 80));
+        assert!(ink.iter().map(|(x, _)| *x).max().unwrap() >= 204, "RTL text must end at the right margin");
+    }
+
+    #[test]
+    fn wrapped_latin_line_keeps_its_persian_paragraph_direction() {
+        let fonts = Fonts::bundled();
+        let mut pm = Pixmap::new(220, 140).unwrap();
+        fonts.wrap_lines(&mut pm, 10.0, 10.0, 100.0, 18.0, "سلام دنیا ClipDeck", Face::Regular, 4);
+        let last_line = fonts.layout_lines(100.0, 18.0, "سلام دنیا ClipDeck", Face::Regular, 4).len() - 1;
+        let y = (10.0 + last_line as f32 * 18.0 * LINE_ADVANCE) as usize;
+        let rightmost = pm.pixels().iter().enumerate().filter(|(i, p)| i / 220 >= y && p.alpha() > 0)
+            .map(|(i, _)| i % 220).max().unwrap();
+        assert!(rightmost >= 104, "wrapped Latin text must retain the RTL paragraph margin, got {rightmost}");
+    }
+
+    #[test]
+    fn mixed_persian_text_keeps_latin_and_numbers_in_reading_order() {
+        let fonts = Fonts::bundled();
+        let glyphs = |text: &str| fonts.layout(18.0, text).glyphs.into_iter().filter_map(|g| match g.glyph {
+            TextGlyph::Font(id) => Some(id), TextGlyph::Key(_) => None,
+        }).collect::<Vec<_>>();
+        let latin = glyphs("ClipDeck 123");
+        let mixed = glyphs("سلام ClipDeck 123");
+        assert!(mixed.starts_with(&latin), "the LTR run belongs on the left, without reversing its letters or numbers");
+        assert!(mixed.iter().all(|id| *id != 0), "no missing glyphs in mixed Persian/Latin text");
+        let isolated = [glyphs("ل"), glyphs("ا")].concat();
+        assert_ne!(glyphs("لا"), isolated, "lam-alef must use contextual glyphs, regardless of how the font represents the ligature");
+    }
+
+    #[test]
+    fn persian_wrapping_preserves_logical_text_and_combining_marks() {
+        let fonts = Fonts::bundled();
+        let text = "سَلام می\u{200c}روم ClipDeck 123";
+        let lines = fonts.layout_lines(100.0, 16.0, text, Face::Regular, 20);
+        assert_eq!(lines.join(" "), text);
+        for line in lines {
+            assert!(fonts.width(16.0, &line, Face::Regular) <= 100.0);
+            assert!(fonts.layout(16.0, &line).glyphs.iter().all(|g| !matches!(g.glyph, TextGlyph::Font(0))));
+        }
+        let joined = fonts.layout(18.0, "میروم");
+        let unjoined = fonts.layout(18.0, "می\u{200c}روم");
+        assert_ne!(joined.width, unjoined.width, "ZWNJ must affect contextual joining, without changing the stored string");
     }
 
     #[test]

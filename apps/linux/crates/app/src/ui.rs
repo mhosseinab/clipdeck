@@ -1506,7 +1506,7 @@ impl Ui {
             stroke_round(pm, x, y, w, h, 15.0, rgba(143, 176, 255, 230), 1.5);
         }
         self.hit(x, y, w, h, Hit::Select(idx));
-        f.text_l(pm, x + 14.0, y + 13.0, 12.0, "↪", Face::Medium, rgba(143, 176, 255, 235));
+        icon_more_vertical(pm, x + 19.0, y + 13.0, rgba(238, 240, 246, 190));
         self.hit(x + 8.0, y + 2.0, 36.0, 22.0, Hit::MoveToBoard(idx));
         icon_pin(pm, x + w - 61.0, y + 13.0, item.pinned);
         self.hit(x + w - 72.0, y + 2.0, 22.0, 22.0, Hit::Pin(idx));
@@ -1989,6 +1989,30 @@ mod tests {
     }
 
     #[test]
+    fn capture_updates_the_open_overlay_after_an_older_page_reply() {
+        let (mut ui, worker) = fixture_ui_with_worker();
+        let reader = clipdeck_core::StoreReader::open(ui.app.store.path()).unwrap();
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        ui.page_tx = Some(tx);
+        ui.visible = true;
+        ui.refresh();
+        let initial = rx.try_recv().unwrap();
+        let old_page = reader.page(&initial.query, &initial.filter, initial.offset, PAGE_SIZE).unwrap();
+        let mut item = fixture_item(clipdeck_core::ItemType::Text, "سلام متن جدید");
+        item.id = "new-live-capture".into();
+        ui.apply(AppEvent::Captured { item, source_app: None, image: None });
+        assert!(matches!(worker.try_recv(), Ok(WorkerCmd::CaptureHandled)));
+        assert!(ui.pending_page.is_some());
+        ui.apply(AppEvent::PageLoaded { token: initial.token, page: Ok(old_page) });
+        let latest = rx.try_recv().unwrap();
+        let page = reader.page(&latest.query, &latest.filter, latest.offset, PAGE_SIZE).unwrap();
+        ui.apply(AppEvent::PageLoaded { token: latest.token, page: Ok(page) });
+        assert!(ui.visible);
+        assert_eq!(ui.items[0].id, "new-live-capture");
+        assert_eq!(ui.items[0].content, "سلام متن جدید");
+    }
+
+    #[test]
     fn stale_page_results_cannot_replace_the_current_query() {
         let mut ui = fixture_ui();
         ui.page_token = 2;
@@ -2047,7 +2071,7 @@ mod tests {
         let fonts = Fonts::bundled();
         for (key, label) in KEYBOARD_HINTS {
             for ch in key.chars() {
-                assert!(is_key_symbol(ch) || fonts.medium.lookup_glyph_index(ch) != 0, "unsupported key glyph {ch}");
+                assert!(is_key_symbol(ch) || fonts.regular.lookup_glyph_index(ch) != 0, "unsupported key glyph {ch}");
             }
             for ch in label.chars() {
                 assert_ne!(fonts.regular.lookup_glyph_index(ch), 0, "unsupported label glyph {ch}");

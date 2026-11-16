@@ -24,7 +24,7 @@ desktop-file-validate "$stage/payload/usr/share/applications/$app_id.desktop"
 appstreamcli validate --no-net --strict "$stage/payload/usr/share/metainfo/$app_id.metainfo.xml"
 appstreamcli validate-tree --no-net --strict "$stage/payload"
 [[ -f "$stage/payload/usr/share/doc/clipdeck/copyright" ]]
-[[ -f "$stage/payload/usr/share/doc/clipdeck/OFL-Roboto.txt" ]]
+[[ -f "$stage/payload/usr/share/doc/clipdeck/OFL-NotoSansArabic.txt" ]]
 version="$(dpkg-deb --field "$stage/clipdeck.deb" Version)"
 arch="$(dpkg-deb --field "$stage/clipdeck.deb" Architecture)"
 [[ "$("$binary" --version)" == "ClipDeck ${version%-*}" ]]
