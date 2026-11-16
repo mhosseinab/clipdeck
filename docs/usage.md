@@ -31,7 +31,7 @@ Download the **amd64** or **arm64** `.deb` matching your machine from
 [GitHub Releases](https://github.com/mhosseinab/clipdeck/releases/latest), then:
 
 ```bash
-sudo apt install ./clipdeck_2.1.0-1_$(dpkg --print-architecture).deb
+sudo apt install ./clipdeck_2.1.1-1_$(dpkg --print-architecture).deb
 clipdeck
 ```
 
