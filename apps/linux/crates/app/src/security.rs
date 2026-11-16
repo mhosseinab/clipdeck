@@ -17,6 +17,7 @@ use winit::event_loop::EventLoopProxy;
 
 const POLICY_FILE: &str = "clipdeck-security.json";
 const GENERATION_MARKER: &str = ".clipdeck-storage";
+const KEYRING_STARTUP_ATTEMPTS: usize = 30;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PrivacyConfig {
     pub configured: bool,
@@ -460,13 +461,73 @@ fn open_with(
     }
     Ok((store, config))
 }
+fn wait_for_keyring(
+    profile: &Path,
+    provider: &impl Keyring,
+    attempts: usize,
+    mut wait: impl FnMut(),
+) -> Result<(), String> {
+    let mut remaining = attempts.max(1);
+    loop {
+        match required_key(provider, profile) {
+            Ok(_) => return Ok(()),
+            Err(error) if remaining == 1 => return Err(format!(
+                "{error}. Unlock or restore the desktop keyring, then restart ClipDeck."
+            )),
+            Err(_) => {
+                remaining -= 1;
+                wait();
+            }
+        }
+    }
+}
+
 pub fn open_store(profile: &Path, apply_pending: bool) -> Result<(Store, PrivacyConfig), String> {
+    if apply_pending {
+        let config = load_config(profile)?;
+        if config.encrypted || config.pending.is_some() {
+            // Login can launch the daemon before Secret Service exposes its keys.
+            // Keep storage closed and watching stopped until a key is available.
+            wait_for_keyring(profile, &DesktopKeyring, KEYRING_STARTUP_ATTEMPTS, || {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            })?;
+        }
+    }
     open_with(profile, apply_pending, &DesktopKeyring)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    struct StartupKeyring(std::cell::RefCell<std::collections::VecDeque<Result<Option<EncryptionKey>, String>>>);
+    impl Keyring for StartupKeyring {
+        fn get(&self, _: &Path) -> Result<Option<EncryptionKey>, String> {
+            self.0.borrow_mut().pop_front().unwrap_or(Ok(None))
+        }
+        fn put(&self, _: &Path, _: &EncryptionKey) -> Result<(), String> {
+            panic!("startup must never replace an encryption key")
+        }
+    }
+
+    #[test]
+    fn encrypted_startup_waits_for_keyring_readiness() {
+        let keys = StartupKeyring(std::cell::RefCell::new(std::collections::VecDeque::from([
+            Ok(None), Err("keyring not ready".into()), Ok(Some(EncryptionKey::generate().unwrap())),
+        ])));
+        let mut waits = 0;
+        assert!(wait_for_keyring(Path::new("/synthetic-profile"), &keys, 5, || waits += 1).is_ok());
+        assert_eq!(waits, 2);
+        assert!(keys.0.borrow().is_empty());
+    }
+
+    #[test]
+    fn encrypted_startup_retry_is_bounded_and_preserves_missing_key_error() {
+        let keys = StartupKeyring(std::cell::RefCell::new(std::collections::VecDeque::new()));
+        let mut waits = 0;
+        let error = wait_for_keyring(Path::new("/synthetic-profile"), &keys, 3, || waits += 1).unwrap_err();
+        assert!(error.contains("desktop-keyring key is missing"));
+        assert_eq!(waits, 2);
+    }
     struct TestProfile(PathBuf);
     impl TestProfile {
         fn new() -> Self {
