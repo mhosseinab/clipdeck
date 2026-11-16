@@ -36,6 +36,11 @@ Build on the oldest supported distro when preparing portable packages.
 The tarball contains `usr/bin/clipdeck`, desktop/icon resources and licenses;
 it is an extracted prefix layout, not an AppImage or self-contained runtime.
 
+The manual **Package candidates** GitHub Actions workflow builds Deb, tarball
+and Snap artifacts on native Ubuntu 24.04 amd64 and ARM64 runners. It runs the
+same package checks and retains artifacts for 14 days. It does not publish
+packages or create releases.
+
 ## Package a Snap
 
 See the [Snap packaging guide](../snap/README.md) for the Snapcraft/LXD build,

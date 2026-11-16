@@ -4,8 +4,8 @@ From the repository root, with Snapcraft and an initialized LXD build provider:
 
 ```sh
 mkdir -p dist
-snapcraft pack --platform amd64 --output dist/clipdeck_2.1.0_amd64.snap
-sudo snap install --dangerous ./dist/clipdeck_2.1.0_amd64.snap
+snapcraft pack --platform amd64 --output dist/clipdeck_2.1.1_amd64.snap
+sudo snap install --dangerous ./dist/clipdeck_2.1.1_amd64.snap
 sudo snap connect clipdeck:password-manager-service
 ```
 
@@ -61,6 +61,16 @@ release-frame capture, satisfying both the Store's dimension and aspect-ratio
 requirements. The normal overlay size remains 1240×372.
 
 ## Local validation
+
+The 2.1.1 candidates were built on native Ubuntu 24.04 amd64 and ARM64 runners
+in [the package workflow](https://github.com/mhosseinab/clipdeck/actions/runs/43814561270).
+Both the Deb and Snap builds passed all 244 contract checks and 142 workspace
+tests (one desktop-keyring test ignored on headless runners). Downloaded
+packages passed checksum, version, desktop metadata and architecture checks;
+all 21 ELF files in each Snap matched its architecture. The autostart fix waits
+briefly for the desktop keyring before opening encrypted history. Its amd64
+candidate survived an actual logout/login test; physical ARM64 desktop testing
+remains unverified.
 
 The 2.1.0 amd64 candidate was built with Snapcraft 9.2.1 in LXD and installed
 locally with strict confinement. Synthetic import/export, data preservation
