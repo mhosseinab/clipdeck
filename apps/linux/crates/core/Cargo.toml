@@ -4,6 +4,13 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "Clipboard history, pinboards and encrypted storage for ClipDeck"
+readme = "README.md"
+keywords = ["clipboard", "sqlite", "encryption"]
+publish = ["crates-io"]
+# Integration tests use repository fixtures and app assets outside this crate.
+include = ["src/**", "README.md", "LICENSE"]
 
 [dependencies]
 rusqlite = { version = "0.41.1", features = ["bundled-sqlcipher-vendored-openssl"] }

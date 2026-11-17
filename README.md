@@ -28,6 +28,9 @@ The Snap supports **amd64 (x86_64) and arm64 (AArch64)**. Debian packages for bo
 are available from [GitHub Releases](https://github.com/mhosseinab/clipdeck/releases/latest).
 See the [installation guide](docs/usage.md#install) for setup and encryption.
 
+Rust users can install with `cargo install clipdeck-app --locked`.
+See the [build prerequisites](docs/development.md#build-and-run).
+
 ## Get started
 
 1. **Copy** text, a link, or an image. ClipDeck keeps it while watching is enabled.

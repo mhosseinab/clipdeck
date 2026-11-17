@@ -4,14 +4,19 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Fast native clipboard manager with search, pinboards and paste stack"
+readme = "README.md"
+keywords = ["clipboard", "linux", "productivity"]
+publish = ["crates-io"]
+include = ["src/**", "assets/**", "LICENSE", "README.md", "THIRD-PARTY-TEXT-LICENSES.txt"]
 
 [[bin]]
 name = "clipdeck"
 path = "src/main.rs"
 
 [dependencies]
-clipdeck-core = { path = "../core" }
+clipdeck-core = { path = "../core", version = "=2.1.2" }
 serde_json = "1"
 arboard = { version = "3", default-features = false, features = ["image-data", "wayland-data-control"] }
 winit = "0.30"

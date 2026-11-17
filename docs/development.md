@@ -47,6 +47,32 @@ See the [Snap packaging guide](../snap/README.md) for the Snapcraft/LXD build,
 local installation, confinement checks, and screenshot capture. Building a
 package does not publish it.
 
+## Install or publish the Rust crates
+
+The registry packages are `clipdeck-core` (library) and `clipdeck-app` (Linux
+application). The application installs the `clipdeck` executable:
+
+```bash
+cargo install clipdeck-app --locked
+```
+
+Use the build prerequisites above. Cargo installs the executable without the
+desktop entries provided by the Snap and Debian packages.
+
+For an authorized crates.io publication, authenticate with `cargo login`, then
+verify and publish both packages from a clean checkout using a current Cargo:
+
+```bash
+cargo publish --manifest-path apps/linux/Cargo.toml --dry-run -p clipdeck-core -p clipdeck-app
+cargo publish --manifest-path apps/linux/Cargo.toml -p clipdeck-core -p clipdeck-app
+```
+
+Cargo stages and verifies both archives, then publishes the core dependency
+before the application. Keep their versions and the application's exact core
+dependency requirement aligned. Repository integration tests remain in the full
+checkout; the core registry archive excludes tests that require external fixtures
+or application assets. The independent specification crate is not published.
+
 ## Checks and profiles
 
 ```bash
