@@ -28,8 +28,17 @@ The Snap supports **amd64 (x86_64) and arm64 (AArch64)**. Debian packages for bo
 are available from [GitHub Releases](https://github.com/mhosseinab/clipdeck/releases/latest).
 See the [installation guide](docs/usage.md#install) for setup and encryption.
 
-Rust users can install with `cargo install clipdeck-app --locked`.
-See the [build prerequisites](docs/development.md#build-and-run).
+### Cargo
+
+Install [clipdeck-app from crates.io](https://crates.io/crates/clipdeck-app):
+
+```bash
+cargo install clipdeck-app --locked
+clipdeck run
+```
+
+This builds from source and installs the `clipdeck` executable.
+See the [Linux build prerequisites](docs/development.md#build-and-run).
 
 ## Get started
 
@@ -47,6 +56,8 @@ On **GNOME Wayland**, open system **Settings → Keyboard → View and Customize
 Shortcuts → Custom Shortcuts**. Add **ClipDeck**, set the command to
 `/snap/bin/clipdeck toggle`, and assign **Ctrl+Shift+V**. ClipDeck must already
 be running. Open system Settings directly if the app's button fails.
+For Cargo installations, use `/home/YOUR_USER/.cargo/bin/clipdeck toggle`
+instead, replacing `YOUR_USER` with your username.
 
 Encrypted history is optional and uses your desktop keyring. Exports and the
 system clipboard stay plaintext. Pause watching when handling sensitive content.
